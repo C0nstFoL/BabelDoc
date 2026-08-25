@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# 临时文件
+*.tmp
+*.temp
+
+# 输入输出（由 volume 挂载）
+input/
+output/
+config/
+
+# 系统
+.DS_Store
+Thumbs.db
