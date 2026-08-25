@@ -780,6 +780,239 @@ def cleanup_temp(temp_dir):
 # 创建 Gradio 界面
 with gr.Blocks(
     title="BabelDOC 论文翻译 - DeepSeek",
+    theme=gr.themes.Soft(),
+    css="""
+    /* ===== 主题变量：亮色（默认） ===== */
+    :root {
+        --log-bg: #1a1a2e;
+        --log-border: #333;
+        --log-fg: #d4d4d8;
+        --log-muted: #888;
+        --brand: #6C5CE7;
+        --brand-light: #A29BFE;
+        --card-bg: #ffffff;
+        --card-border: #ECECF4;
+        --card-shadow: 0 2px 10px rgba(30, 30, 60, 0.06);
+        --body-bg: #f7f7fb;
+        --text-main: #333;
+        --text-muted: #888;
+    }
+
+    /* ===== 主题变量：暗色 =====
+       html/body 同时加 .dark，既让自定义变量在 html 上生效（用于铺满两侧背景），
+       也复用 Gradio 内置组件依赖的 body.dark 深色样式。 */
+    html.dark, body.dark {
+        --log-bg: #101018;
+        --log-border: #34343f;
+        --log-fg: #d4d4d8;
+        --log-muted: #9a9aa8;
+        --brand: #A29BFE;
+        --brand-light: #6C5CE7;
+        --card-bg: #23232f;
+        --card-border: #34343f;
+        --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+        --body-bg: #16161e;
+        --text-main: #e4e4ec;
+        --text-muted: #9a9aa8;
+    }
+
+    html, body { background: var(--body-bg) !important; }
+    .gradio-container { background: var(--body-bg) !important; max-width: 880px !important; margin: 0 auto !important; }
+
+    .app-header { text-align: center; padding: 8px 0 4px; }
+    .app-header h1 { font-size: 1.8rem; margin-bottom: 0; }
+    .app-header p { margin-top: 4px; color: var(--text-muted); }
+    footer { display: none !important; }
+
+    /* ===== 主题切换按钮 ===== */
+    .theme-toggle-row { justify-content: flex-end !important; margin-bottom: 4px; }
+    .theme-toggle-row button {
+        border-radius: 999px !important;
+        font-size: 12px !important;
+        padding: 4px 12px !important;
+    }
+
+    /* ===== 步骤条 ===== */
+    .step-bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        margin: 4px 0 18px;
+        padding: 12px 8px;
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+        box-shadow: var(--card-shadow);
+    }
+    .step-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--text-main);
+        font-weight: 500;
+    }
+    .step-num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px; height: 20px;
+        border-radius: 50%;
+        background: var(--brand);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    .step-sep {
+        width: 28px;
+        height: 1px;
+        background: var(--card-border);
+    }
+
+    /* ===== 卡片区块 ===== */
+    .step-card {
+        border-radius: 14px !important;
+        border: 1px solid var(--card-border) !important;
+        box-shadow: var(--card-shadow) !important;
+        padding: 16px !important;
+        margin-bottom: 14px !important;
+        background: var(--card-bg) !important;
+    }
+    .step-card h4, .step-card .prose h4 {
+        margin-top: 0 !important;
+        margin-bottom: 12px !important;
+        font-size: 15px !important;
+        color: var(--text-main) !important;
+    }
+    .workflow-col { gap: 4px !important; }
+
+    .action-row { margin: 4px 0 14px !important; }
+    .action-row button { border-radius: 10px !important; }
+
+    /* ===== 日志面板 ===== */
+    .log-panel {
+        font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace !important;
+        font-size: 12px !important;
+        line-height: 1.5 !important;
+        height: 520px !important;
+        max-height: 520px;
+        overflow-y: auto !important;
+        background: var(--log-bg) !important;
+        border: 1px solid var(--log-border) !important;
+        border-radius: 8px !important;
+        padding: 10px 12px !important;
+        color: var(--log-fg);
+        flex-shrink: 0;
+    }
+
+    .log-line {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin: 0;
+        line-height: 1.6;
+    }
+    .log-line b { font-weight: 600; }
+
+    .log-time {
+        color: var(--log-muted);
+        font-size: 11px;
+        font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    }
+
+    .log-error  { color: #F44336; }
+    .log-warning { color: #FFB74D; }
+    .log-info   { color: #E0E0E0; }
+    .log-plain  { color: #999; }
+
+    .log-separator {
+        height: 0;
+        border-bottom: 1px solid #333;
+        margin: 4px 0;
+    }
+
+    /* 阶段状态行 */
+    .stage-done  { color: #4CAF50; }
+    .stage-start { color: #4FC3F7; }
+    .stage-duration { color: #888; font-size: 11px; }
+
+    /* ===== 动画 ===== */
+    /* CSS Spinner */
+    .spinner {
+        display: inline-block;
+        width: 12px; height: 12px;
+        border: 2px solid #4FC3F7;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: middle;
+        margin-right: 2px;
+    }
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    /* 活跃指示点 */
+    .alive-dot {
+        display: inline-block;
+        width: 8px; height: 8px;
+        background: #4CAF50;
+        border-radius: 50%;
+        animation: pulse-dot 1s ease-in-out infinite;
+        vertical-align: middle;
+        margin-right: 4px;
+    }
+    @keyframes pulse-dot {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50%      { opacity: 0.4; transform: scale(0.7); }
+    }
+
+    /* 已用时间 */
+    .elapsed {
+        color: #888;
+        font-size: 11px;
+        font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    }
+
+    /* ===== 进度区域 ===== */
+    .progress-area {
+        margin-bottom: 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #333;
+    }
+    .progress-text {
+        font-size: 12px;
+        display: block;
+        margin-bottom: 4px;
+    }
+    .progress-bar {
+        width: 100%;
+        height: 16px;
+        background: #222;
+        border-radius: 8px;
+        overflow: hidden;
+        display: flex;
+        border: 1px solid #444;
+    }
+    .progress-bar > div {
+        height: 100%;
+        border-right: 2px solid #1a1a2e;
+        transition: background 0.3s;
+    }
+
+    /* 进度条分段颜色 */
+    .pg-done    { background: #4CAF50; }
+    .pg-current { background: #4FC3F7; animation: pulse-current 1.2s ease-in-out infinite; }
+    .pg-pending { background: #3a3a4a; }
+
+    @keyframes pulse-current {
+        0%, 100% { opacity: 1; }
+        50%      { opacity: 0.6; }
+    }
+
+    .progress-bar > div[title] { cursor: help; }
+    """,
 ) as demo:
     # 状态变量
     temp_output_dir = gr.State(None)
@@ -1154,237 +1387,4 @@ if __name__ == "__main__":
         server_name="0.0.0.0",
         server_port=7865,
         show_error=True,
-        theme=gr.themes.Soft(),
-        css="""
-        /* ===== 主题变量：亮色（默认） ===== */
-        :root {
-            --log-bg: #1a1a2e;
-            --log-border: #333;
-            --log-fg: #d4d4d8;
-            --log-muted: #888;
-            --brand: #6C5CE7;
-            --brand-light: #A29BFE;
-            --card-bg: #ffffff;
-            --card-border: #ECECF4;
-            --card-shadow: 0 2px 10px rgba(30, 30, 60, 0.06);
-            --body-bg: #f7f7fb;
-            --text-main: #333;
-            --text-muted: #888;
-        }
-
-        /* ===== 主题变量：暗色 =====
-           html/body 同时加 .dark，既让自定义变量在 html 上生效（用于铺满两侧背景），
-           也复用 Gradio 内置组件依赖的 body.dark 深色样式。 */
-        html.dark, body.dark {
-            --log-bg: #101018;
-            --log-border: #34343f;
-            --log-fg: #d4d4d8;
-            --log-muted: #9a9aa8;
-            --brand: #A29BFE;
-            --brand-light: #6C5CE7;
-            --card-bg: #23232f;
-            --card-border: #34343f;
-            --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
-            --body-bg: #16161e;
-            --text-main: #e4e4ec;
-            --text-muted: #9a9aa8;
-        }
-
-        html, body { background: var(--body-bg) !important; }
-        .gradio-container { background: var(--body-bg) !important; max-width: 880px !important; margin: 0 auto !important; }
-
-        .app-header { text-align: center; padding: 8px 0 4px; }
-        .app-header h1 { font-size: 1.8rem; margin-bottom: 0; }
-        .app-header p { margin-top: 4px; color: var(--text-muted); }
-        footer { display: none !important; }
-
-        /* ===== 主题切换按钮 ===== */
-        .theme-toggle-row { justify-content: flex-end !important; margin-bottom: 4px; }
-        .theme-toggle-row button {
-            border-radius: 999px !important;
-            font-size: 12px !important;
-            padding: 4px 12px !important;
-        }
-
-        /* ===== 步骤条 ===== */
-        .step-bar {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-            margin: 4px 0 18px;
-            padding: 12px 8px;
-            background: var(--card-bg);
-            border: 1px solid var(--card-border);
-            border-radius: 12px;
-            box-shadow: var(--card-shadow);
-        }
-        .step-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-            color: var(--text-main);
-            font-weight: 500;
-        }
-        .step-num {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 20px; height: 20px;
-            border-radius: 50%;
-            background: var(--brand);
-            color: #fff;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        .step-sep {
-            width: 28px;
-            height: 1px;
-            background: var(--card-border);
-        }
-
-        /* ===== 卡片区块 ===== */
-        .step-card {
-            border-radius: 14px !important;
-            border: 1px solid var(--card-border) !important;
-            box-shadow: var(--card-shadow) !important;
-            padding: 16px !important;
-            margin-bottom: 14px !important;
-            background: var(--card-bg) !important;
-        }
-        .step-card h4, .step-card .prose h4 {
-            margin-top: 0 !important;
-            margin-bottom: 12px !important;
-            font-size: 15px !important;
-            color: var(--text-main) !important;
-        }
-        .workflow-col { gap: 4px !important; }
-
-        .action-row { margin: 4px 0 14px !important; }
-        .action-row button { border-radius: 10px !important; }
-
-        /* ===== 日志面板 ===== */
-        .log-panel {
-            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace !important;
-            font-size: 12px !important;
-            line-height: 1.5 !important;
-            height: 520px !important;
-            max-height: 520px;
-            overflow-y: auto !important;
-            background: var(--log-bg) !important;
-            border: 1px solid var(--log-border) !important;
-            border-radius: 8px !important;
-            padding: 10px 12px !important;
-            color: var(--log-fg);
-            flex-shrink: 0;
-        }
-
-        .log-line {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            margin: 0;
-            line-height: 1.6;
-        }
-        .log-line b { font-weight: 600; }
-
-        .log-time {
-            color: var(--log-muted);
-            font-size: 11px;
-            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-        }
-
-        .log-error  { color: #F44336; }
-        .log-warning { color: #FFB74D; }
-        .log-info   { color: #E0E0E0; }
-        .log-plain  { color: #999; }
-
-        .log-separator {
-            height: 0;
-            border-bottom: 1px solid #333;
-            margin: 4px 0;
-        }
-
-        /* 阶段状态行 */
-        .stage-done  { color: #4CAF50; }
-        .stage-start { color: #4FC3F7; }
-        .stage-duration { color: #888; font-size: 11px; }
-
-        /* ===== 动画 ===== */
-        /* CSS Spinner */
-        .spinner {
-            display: inline-block;
-            width: 12px; height: 12px;
-            border: 2px solid #4FC3F7;
-            border-top-color: transparent;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            vertical-align: middle;
-            margin-right: 2px;
-        }
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* 活跃指示点 */
-        .alive-dot {
-            display: inline-block;
-            width: 8px; height: 8px;
-            background: #4CAF50;
-            border-radius: 50%;
-            animation: pulse-dot 1s ease-in-out infinite;
-            vertical-align: middle;
-            margin-right: 4px;
-        }
-        @keyframes pulse-dot {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50%      { opacity: 0.4; transform: scale(0.7); }
-        }
-
-        /* 已用时间 */
-        .elapsed {
-            color: #888;
-            font-size: 11px;
-            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-        }
-
-        /* ===== 进度区域 ===== */
-        .progress-area {
-            margin-bottom: 8px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid #333;
-        }
-        .progress-text {
-            font-size: 12px;
-            display: block;
-            margin-bottom: 4px;
-        }
-        .progress-bar {
-            width: 100%;
-            height: 16px;
-            background: #222;
-            border-radius: 8px;
-            overflow: hidden;
-            display: flex;
-            border: 1px solid #444;
-        }
-        .progress-bar > div {
-            height: 100%;
-            border-right: 2px solid #1a1a2e;
-            transition: background 0.3s;
-        }
-
-        /* 进度条分段颜色 */
-        .pg-done    { background: #4CAF50; }
-        .pg-current { background: #4FC3F7; animation: pulse-current 1.2s ease-in-out infinite; }
-        .pg-pending { background: #3a3a4a; }
-
-        @keyframes pulse-current {
-            0%, 100% { opacity: 1; }
-            50%      { opacity: 0.6; }
-        }
-
-        .progress-bar > div[title] { cursor: help; }
-        """,
     )
