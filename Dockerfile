@@ -10,12 +10,16 @@ LABEL maintainer="BabelDoc User"
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# 安装系统依赖
+# 安装系统依赖（使用清华 apt 镜像源加速）
 #   - libgl1, libglib2.0: OpenCV / PDF 渲染所需
 #   - libsm6, libxext6, libxrender-dev: 图形相关
 #   - fonts-wqy-zenhei / fonts-noto-cjk: 中文字体支持
 #   - poppler-utils: PDF 工具
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i \
+    -e 's|URIs: http://deb.debian.org/debian-security|URIs: http://mirrors.tuna.tsinghua.edu.cn/debian-security|g' \
+    -e 's|URIs: http://deb.debian.org/debian|URIs: http://mirrors.tuna.tsinghua.edu.cn/debian|g' \
+    /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
@@ -25,6 +29,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
+
+# 使用清华 pip 镜像源加速
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    && pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
 
 # 创建工作目录
 WORKDIR /app
@@ -37,10 +45,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码
 COPY babeldoc_translator.py .
-COPY .babeldoc_config.json .
 
-# 创建临时输出目录
-RUN mkdir -p /tmp/babeldoc_output
+# 创建历史任务输出目录（配置文件与历史记录通过 volume 挂载持久化，不在镜像中复制）
+RUN mkdir -p /app/outputs
 
 # 暴露 Gradio 服务端口
 EXPOSE 7865
