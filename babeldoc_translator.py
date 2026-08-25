@@ -702,10 +702,10 @@ def translate_pdf(
     翻译会继续进行；刷新后可通过页面自动或手动重新接上最新进度（见 `resume_progress`）。
     """
     if not pdf_file:
-        yield None, "请上传 PDF 文件", None
+        yield None, '<div class="log-line log-error" style="font-weight:bold">⚠️ 请先上传 PDF 文件</div>', None
         return
     if not api_key:
-        yield None, "请输入 DeepSeek API Key", None
+        yield None, '<div class="log-line log-error" style="font-weight:bold">⚠️ 请输入 DeepSeek API Key</div>', None
         return
 
     if _TASK["running"]:
@@ -784,150 +784,176 @@ with gr.Blocks(
     # 状态变量
     temp_output_dir = gr.State(None)
 
+    # 主题切换（默认跟随系统）
+    with gr.Row(elem_classes="theme-toggle-row"):
+        theme_toggle_btn = gr.Button("🖥️ 跟随系统", size="sm", scale=0)
+
     # 标题
     with gr.Row(elem_classes="app-header"):
-        with gr.Column(scale=1):
-            gr.Markdown(
-                """
-                # 📄 BabelDOC 论文翻译
-                基于 **DeepSeek** 模型的 PDF 科研论文翻译工具，保留原文排版与公式
-                """
-            )
-
-    with gr.Row(equal_height=False):
-        # 左侧：设置面板
-        with gr.Column(scale=2):
-            with gr.Group():
-                gr.Markdown("### 📁 文件")
-                pdf_input = gr.File(
-                    label="上传 PDF 文件",
-                    file_types=[".pdf"],
-                    file_count="single",
-                )
-
-            with gr.Group():
-                gr.Markdown("### 🤖 DeepSeek 配置")
-                api_key = gr.Textbox(
-                    label="DeepSeek API Key",
-                    placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-                    type="password",
-                )
-                with gr.Row():
-                    base_url = gr.Textbox(
-                        label="API Base URL",
-                        value=DEFAULT_DEEPSEEK_BASE_URL,
-                        placeholder="https://api.deepseek.com/v1",
-                    )
-                    model = gr.Textbox(
-                        label="模型名称",
-                        value=DEFAULT_DEEPSEEK_MODEL,
-                        placeholder="deepseek-chat",
-                    )
-                save_config_btn = gr.Button(
-                    "💾 保存 API 配置", variant="secondary", size="sm"
-                )
-                config_status = gr.Markdown("", visible=True)
-
-            with gr.Group():
-                gr.Markdown("### 🌐 语言设置")
-                with gr.Row():
-                    lang_in = gr.Dropdown(
-                        label="源语言",
-                        choices=[
-                            ("英语", "en"),
-                            ("中文", "zh"),
-                            ("日语", "ja"),
-                            ("法语", "fr"),
-                            ("德语", "de"),
-                            ("俄语", "ru"),
-                            ("西班牙语", "es"),
-                            ("韩语", "ko"),
-                        ],
-                        value="en",
-                    )
-                    lang_out = gr.Dropdown(
-                        label="目标语言",
-                        choices=[
-                            ("中文", "zh"),
-                            ("英语", "en"),
-                            ("日语", "ja"),
-                            ("法语", "fr"),
-                            ("德语", "de"),
-                            ("俄语", "ru"),
-                            ("西班牙语", "es"),
-                            ("韩语", "ko"),
-                        ],
-                        value="zh",
-                    )
-
-            with gr.Group():
-                gr.Markdown("### ⚙️ 输出与速度")
-                output_mode = gr.Radio(
-                    label="输出模式",
-                    choices=[
-                        ("双语对照 + 译文", "both"),
-                        ("仅双语对照", "dual_only"),
-                        ("仅译文 (单语)", "mono_only"),
-                    ],
-                    value="both",
-                )
-                speed = gr.Dropdown(
-                    label="翻译速度",
-                    choices=[
-                        ("标准 — QPS=4 线程=4（质量优先）", "标准"),
-                        ("快速 — QPS=10 线程=8（推荐）", "快速"),
-                        ("极速 — QPS=20 线程=12 跳过术语提取", "极速"),
-                    ],
-                    value="快速",
-                )
-
-            with gr.Row():
-                translate_btn = gr.Button("🚀 开始翻译", variant="primary", size="lg", scale=3)
-                resume_btn = gr.Button("🔄 恢复进度", variant="secondary", size="lg", scale=1)
-                stop_btn = gr.Button("⏹ 停止", variant="stop", size="lg", scale=1)
-
-        # 右侧：日志与结果
-        with gr.Column(scale=3):
-            with gr.Group():
-                gr.Markdown("### 📋 翻译日志与进度")
-                log_output = gr.HTML(
-                    value="",
-                    elem_classes="log-panel",
-                )
-
-            with gr.Row():
-                result_download = gr.File(
-                    label="📥 下载翻译结果",
-                    file_count="single",
-                )
-                clear_btn = gr.Button("🗑️ 清空", variant="secondary", scale=0)
-
-    # 历史记录区域
-    with gr.Group():
-        gr.Markdown("### 🗂️ 历史记录")
-        history_table = gr.Dataframe(
-            headers=["文件名", "时间", "语言", "耗时", "状态"],
-            datatype=["str", "str", "str", "str", "str"],
-            interactive=False,
-            wrap=True,
+        gr.Markdown(
+            """
+            # 📄 BabelDOC 论文翻译
+            基于 **DeepSeek** 模型的 PDF 科研论文翻译工具，保留原文排版与公式
+            """
         )
-        with gr.Row():
-            history_select = gr.Dropdown(
-                label="选择历史任务",
-                choices=[],
-                value=None,
-                scale=3,
+
+    with gr.Tabs():
+        # ---------------- Tab 1：翻译工作台 ----------------
+        with gr.Tab("🚀 翻译"):
+            # 顶部步骤条
+            gr.HTML(
+                """
+                <div class="step-bar">
+                    <div class="step-item"><span class="step-num">1</span>上传文件</div>
+                    <div class="step-sep"></div>
+                    <div class="step-item"><span class="step-num">2</span>配置 API</div>
+                    <div class="step-sep"></div>
+                    <div class="step-item"><span class="step-num">3</span>语言与速度</div>
+                    <div class="step-sep"></div>
+                    <div class="step-item"><span class="step-num">4</span>开始翻译</div>
+                </div>
+                """
             )
-            history_refresh_btn = gr.Button("🔄 刷新", scale=1)
-        with gr.Row():
-            history_download_original_btn = gr.Button("📥 下载原文", scale=1)
-            history_download_result_btn = gr.Button("📥 下载译文", scale=1)
-            history_delete_btn = gr.Button("🗑️ 删除", variant="stop", scale=1)
-        with gr.Row():
-            history_original_file = gr.File(label="原始文档", scale=1)
-            history_result_file = gr.File(label="翻译后文档", scale=1)
+
+            with gr.Column(elem_classes="workflow-col"):
+                with gr.Group(elem_classes="step-card"):
+                    gr.Markdown("#### ① 上传文件")
+                    pdf_input = gr.File(
+                        label="上传 PDF 文件",
+                        file_types=[".pdf"],
+                        file_count="single",
+                    )
+
+                with gr.Group(elem_classes="step-card"):
+                    gr.Markdown("#### ② DeepSeek 配置")
+                    api_key = gr.Textbox(
+                        label="DeepSeek API Key",
+                        placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                        type="password",
+                    )
+                    with gr.Row():
+                        base_url = gr.Textbox(
+                            label="API Base URL",
+                            value=DEFAULT_DEEPSEEK_BASE_URL,
+                            placeholder="https://api.deepseek.com/v1",
+                        )
+                        model = gr.Textbox(
+                            label="模型名称",
+                            value=DEFAULT_DEEPSEEK_MODEL,
+                            placeholder="deepseek-chat",
+                        )
+                    with gr.Row():
+                        save_config_btn = gr.Button(
+                            "💾 保存 API 配置", variant="secondary", size="sm"
+                        )
+                        config_status = gr.Markdown("", visible=True)
+
+                with gr.Group(elem_classes="step-card"):
+                    gr.Markdown("#### ③ 语言与速度")
+                    with gr.Row():
+                        lang_in = gr.Dropdown(
+                            label="源语言",
+                            choices=[
+                                ("英语", "en"),
+                                ("中文", "zh"),
+                                ("日语", "ja"),
+                                ("法语", "fr"),
+                                ("德语", "de"),
+                                ("俄语", "ru"),
+                                ("西班牙语", "es"),
+                                ("韩语", "ko"),
+                            ],
+                            value="en",
+                        )
+                        lang_out = gr.Dropdown(
+                            label="目标语言",
+                            choices=[
+                                ("中文", "zh"),
+                                ("英语", "en"),
+                                ("日语", "ja"),
+                                ("法语", "fr"),
+                                ("德语", "de"),
+                                ("俄语", "ru"),
+                                ("西班牙语", "es"),
+                                ("韩语", "ko"),
+                            ],
+                            value="zh",
+                        )
+                    with gr.Row():
+                        output_mode = gr.Radio(
+                            label="输出模式",
+                            choices=[
+                                ("双语对照 + 译文", "both"),
+                                ("仅双语对照", "dual_only"),
+                                ("仅译文 (单语)", "mono_only"),
+                            ],
+                            value="both",
+                        )
+                        speed = gr.Dropdown(
+                            label="翻译速度",
+                            choices=[
+                                ("标准 — QPS=4 线程=4（质量优先）", "标准"),
+                                ("快速 — QPS=10 线程=8（推荐）", "快速"),
+                                ("极速 — QPS=20 线程=12 跳过术语提取", "极速"),
+                            ],
+                            value="快速",
+                        )
+
+                with gr.Row(elem_classes="action-row"):
+                    translate_btn = gr.Button(
+                        "🚀 开始翻译", variant="primary", size="lg", scale=3
+                    )
+                    resume_btn = gr.Button("🔄 恢复进度", variant="secondary", size="lg", scale=1)
+                    stop_btn = gr.Button("⏹ 停止", variant="stop", size="lg", scale=1)
+
+                with gr.Group(elem_classes="step-card"):
+                    gr.Markdown("#### ④ 翻译日志与进度")
+                    log_output = gr.HTML(
+                        value="",
+                        elem_classes="log-panel",
+                    )
+                    with gr.Row():
+                        result_download = gr.File(
+                            label="📥 下载翻译结果",
+                            file_count="single",
+                        )
+                        clear_btn = gr.Button("🗑️ 清空", variant="secondary", scale=0)
+
+        # ---------------- Tab 2：历史记录 ----------------
+        with gr.Tab("🗂️ 历史记录"):
+            with gr.Group(elem_classes="step-card"):
+                gr.Markdown("#### 历史翻译任务")
+                history_table = gr.Dataframe(
+                    headers=["文件名", "时间", "语言", "耗时", "状态"],
+                    datatype=["str", "str", "str", "str", "str"],
+                    interactive=False,
+                    wrap=True,
+                )
+                with gr.Row():
+                    history_select = gr.Dropdown(
+                        label="选择历史任务",
+                        choices=[],
+                        value=None,
+                        scale=3,
+                    )
+                    history_refresh_btn = gr.Button("🔄 刷新", scale=1)
+                with gr.Row():
+                    history_download_original_btn = gr.Button("📥 下载原文", scale=1)
+                    history_download_result_btn = gr.Button("📥 下载译文", scale=1)
+                    history_delete_btn = gr.Button("🗑️ 删除", variant="stop", scale=1)
+                with gr.Row():
+                    history_original_file = gr.File(label="原始文档", scale=1)
+                    history_result_file = gr.File(label="翻译后文档", scale=1)
 
     # 事件绑定
+    # 注意：cancels 需要指向真正承载长耗时任务（translate_pdf/resume_progress）的
+    # 事件对象本身，因此按钮 loading 态的切换放在 .then() 链的前后，
+    # 而 translate_event/resume_event 变量始终绑定在核心任务事件上。
+    translate_btn.click(
+        fn=lambda: gr.update(value="⏳ 翻译中...", interactive=False),
+        inputs=[],
+        outputs=[translate_btn],
+    )
     translate_event = translate_btn.click(
         fn=translate_pdf,
         inputs=[
@@ -942,7 +968,8 @@ with gr.Blocks(
         ],
         outputs=[result_download, log_output, temp_output_dir],
         api_name="translate",
-    ).then(
+    )
+    translate_event.then(
         fn=lambda k, u, m: (
             save_config(k, u, m),
             "✅ 配置已自动保存",
@@ -950,13 +977,28 @@ with gr.Blocks(
         inputs=[api_key, base_url, model],
         outputs=[config_status],
     )
+    translate_event.then(
+        fn=lambda: gr.update(value="🚀 开始翻译", interactive=True),
+        inputs=[],
+        outputs=[translate_btn],
+    )
 
     # 恢复进度：重新接上后台正在运行（或已结束）的任务状态
     # 用于翻译过程中刷新页面后，手动点击接回最新进度
+    resume_btn.click(
+        fn=lambda: gr.update(value="⏳ 翻译中...", interactive=False),
+        inputs=[],
+        outputs=[translate_btn],
+    )
     resume_event = resume_btn.click(
         fn=resume_progress,
         inputs=[],
         outputs=[result_download, log_output, temp_output_dir],
+    )
+    resume_event.then(
+        fn=lambda: gr.update(value="🚀 开始翻译", interactive=True),
+        inputs=[],
+        outputs=[translate_btn],
     )
 
     # 停止按钮：杀死子进程 + 取消 Gradio 事件（补充取消恢复进度的轮询）
@@ -965,6 +1007,10 @@ with gr.Blocks(
         inputs=[],
         outputs=[config_status],
         cancels=[translate_event, resume_event],
+    ).then(
+        fn=lambda: gr.update(value="🚀 开始翻译", interactive=True),
+        inputs=[],
+        outputs=[translate_btn],
     )
 
     def handle_save_config(api_key, base_url, model):
@@ -1043,6 +1089,49 @@ with gr.Blocks(
         outputs=[history_table, history_select],
     )
 
+    # 主题初始化：读取本地存储的偏好（默认跟随系统）
+    # Gradio 自身的深色样式以 <body> 是否带 .dark 类为准，
+    # 因此这里复用同一套机制，保证组件文字/背景色都能正确联动。
+    demo.load(
+        fn=None,
+        inputs=[],
+        outputs=[],
+        js="""
+        () => {
+            const labels = {system: '🖥️ 跟随系统', light: '☀️ 亮色', dark: '🌙 暗色'};
+            const saved = localStorage.getItem('babeldoc-theme') || 'system';
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const shouldBeDark = saved === 'dark' || (saved === 'system' && prefersDark);
+            document.documentElement.classList.toggle('dark', shouldBeDark);
+            document.body.classList.toggle('dark', shouldBeDark);
+            const btn = document.querySelector('.theme-toggle-row button');
+            if (btn) btn.textContent = labels[saved];
+        }
+        """,
+    )
+
+    # 主题切换按钮：跟随系统 → 亮色 → 暗色 → 循环
+    theme_toggle_btn.click(
+        fn=None,
+        inputs=[],
+        outputs=[],
+        js="""
+        () => {
+            const order = ['system', 'light', 'dark'];
+            const labels = {system: '🖥️ 跟随系统', light: '☀️ 亮色', dark: '🌙 暗色'};
+            const current = localStorage.getItem('babeldoc-theme') || 'system';
+            const next = order[(order.indexOf(current) + 1) % order.length];
+            localStorage.setItem('babeldoc-theme', next);
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const shouldBeDark = next === 'dark' || (next === 'system' && prefersDark);
+            document.documentElement.classList.toggle('dark', shouldBeDark);
+            document.body.classList.toggle('dark', shouldBeDark);
+            const btn = document.querySelector('.theme-toggle-row button');
+            if (btn) btn.textContent = labels[next];
+        }
+        """,
+    )
+
     # 关闭后清理临时文件
     demo.unload(cleanup_temp)
 
@@ -1067,15 +1156,113 @@ if __name__ == "__main__":
         show_error=True,
         theme=gr.themes.Soft(),
         css="""
+        /* ===== 主题变量：亮色（默认） ===== */
         :root {
             --log-bg: #1a1a2e;
             --log-border: #333;
             --log-fg: #d4d4d8;
             --log-muted: #888;
+            --brand: #6C5CE7;
+            --brand-light: #A29BFE;
+            --card-bg: #ffffff;
+            --card-border: #ECECF4;
+            --card-shadow: 0 2px 10px rgba(30, 30, 60, 0.06);
+            --body-bg: #f7f7fb;
+            --text-main: #333;
+            --text-muted: #888;
         }
+
+        /* ===== 主题变量：暗色 =====
+           html/body 同时加 .dark，既让自定义变量在 html 上生效（用于铺满两侧背景），
+           也复用 Gradio 内置组件依赖的 body.dark 深色样式。 */
+        html.dark, body.dark {
+            --log-bg: #101018;
+            --log-border: #34343f;
+            --log-fg: #d4d4d8;
+            --log-muted: #9a9aa8;
+            --brand: #A29BFE;
+            --brand-light: #6C5CE7;
+            --card-bg: #23232f;
+            --card-border: #34343f;
+            --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+            --body-bg: #16161e;
+            --text-main: #e4e4ec;
+            --text-muted: #9a9aa8;
+        }
+
+        html, body { background: var(--body-bg) !important; }
+        .gradio-container { background: var(--body-bg) !important; max-width: 880px !important; margin: 0 auto !important; }
+
+        .app-header { text-align: center; padding: 8px 0 4px; }
         .app-header h1 { font-size: 1.8rem; margin-bottom: 0; }
-        .app-header p { margin-top: 0; color: #666; }
+        .app-header p { margin-top: 4px; color: var(--text-muted); }
         footer { display: none !important; }
+
+        /* ===== 主题切换按钮 ===== */
+        .theme-toggle-row { justify-content: flex-end !important; margin-bottom: 4px; }
+        .theme-toggle-row button {
+            border-radius: 999px !important;
+            font-size: 12px !important;
+            padding: 4px 12px !important;
+        }
+
+        /* ===== 步骤条 ===== */
+        .step-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            margin: 4px 0 18px;
+            padding: 12px 8px;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            box-shadow: var(--card-shadow);
+        }
+        .step-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--text-main);
+            font-weight: 500;
+        }
+        .step-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px; height: 20px;
+            border-radius: 50%;
+            background: var(--brand);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .step-sep {
+            width: 28px;
+            height: 1px;
+            background: var(--card-border);
+        }
+
+        /* ===== 卡片区块 ===== */
+        .step-card {
+            border-radius: 14px !important;
+            border: 1px solid var(--card-border) !important;
+            box-shadow: var(--card-shadow) !important;
+            padding: 16px !important;
+            margin-bottom: 14px !important;
+            background: var(--card-bg) !important;
+        }
+        .step-card h4, .step-card .prose h4 {
+            margin-top: 0 !important;
+            margin-bottom: 12px !important;
+            font-size: 15px !important;
+            color: var(--text-main) !important;
+        }
+        .workflow-col { gap: 4px !important; }
+
+        .action-row { margin: 4px 0 14px !important; }
+        .action-row button { border-radius: 10px !important; }
 
         /* ===== 日志面板 ===== */
         .log-panel {
