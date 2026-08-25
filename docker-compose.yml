@@ -1,0 +1,30 @@
+# ============================================================
+# BabelDOC 论文翻译工具 - Docker Compose
+# ============================================================
+# 使用方法:
+#   启动: docker compose up -d
+#   停止: docker compose down
+#   查看日志: docker compose logs -f
+#   访问: http://localhost:7865
+# ============================================================
+
+services:
+  babeldoc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: babeldoc-translator
+    ports:
+      - "7865:7865"
+    volumes:
+      # 持久化 API 配置到本地文件（首次会自动创建）
+      - ./babeldoc_config.json:/app/.babeldoc_config.json
+      # 可选：映射输入/输出目录，方便直接存取文件
+      - ./input:/app/input:ro
+      - ./output:/app/output
+    environment:
+      - TZ=Asia/Shanghai
+      # 如需通过代理访问 API，可取消注释
+      # - HTTP_PROXY=http://host.docker.internal:7890
+      # - HTTPS_PROXY=http://host.docker.internal:7890
+    restart: unless-stopped
