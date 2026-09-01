@@ -11,10 +11,24 @@ import glob
 from datetime import datetime
 from pathlib import Path
 import gradio as gr
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.requests import Request
+from starlette.responses import RedirectResponse
+from authlib.integrations.starlette_client import OAuth
 
 # 默认 DeepSeek 配置
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+
+# ---- Zitadel OIDC 认证配置 ---- #
+ZITADEL_ISSUER = os.environ.get("ZITADEL_ISSUER", "https://auth.folink.site")
+ZITADEL_CLIENT_ID = os.environ.get("ZITADEL_CLIENT_ID", "")
+ZITADEL_CLIENT_SECRET = os.environ.get("ZITADEL_CLIENT_SECRET", "")
+# 完整外部访问地址（用于拼接 OIDC 回调地址），例如 https://translate.folink.site
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://translate.folink.site")
+# 用于加密登录会话 Cookie，生产环境务必通过环境变量设置固定值，
+# 否则每次重启服务都会导致已登录用户全部掉线
+SESSION_SECRET = os.environ.get("SESSION_SECRET", base64.b64encode(os.urandom(32)).decode())
 
 # 配置文件路径（放在项目目录下，避免 macOS 沙箱权限问题）
 CONFIG_DIR = Path(__file__).parent
@@ -777,6 +791,86 @@ def cleanup_temp(temp_dir):
             pass
 
 
+# ---- Zitadel OIDC 认证 ---- #
+oauth = OAuth()
+oauth.register(
+    name="zitadel",
+    server_metadata_url=f"{ZITADEL_ISSUER.rstrip('/')}/.well-known/openid-configuration",
+    client_id=ZITADEL_CLIENT_ID,
+    client_secret=ZITADEL_CLIENT_SECRET,
+    client_kwargs={"scope": "openid profile email"},
+)
+
+
+def _is_logged_in(request: Request) -> bool:
+    return bool(request.session.get("user"))
+
+
+def gradio_auth_dependency(request: Request) -> str | None:
+    """供 gr.mount_gradio_app 使用：从 session 中取用户标识，未登录返回 None"""
+    user = request.session.get("user") or {}
+    return user.get("name") or user.get("sub")
+
+
+async def auth_login(request: Request):
+    """跳转到 Zitadel 登录页"""
+    redirect_uri = f"{APP_BASE_URL.rstrip('/')}/auth/callback"
+    return await oauth.zitadel.authorize_redirect(request, redirect_uri)
+
+
+async def auth_callback(request: Request):
+    """Zitadel 登录回调：换取 token 并写入 session"""
+    try:
+        token = await oauth.zitadel.authorize_access_token(request)
+    except Exception as e:
+        return RedirectResponse(url="/auth/login")
+    user = token.get("userinfo") or {}
+    request.session["user"] = {
+        "sub": user.get("sub"),
+        "name": user.get("name") or user.get("preferred_username") or user.get("email"),
+        "email": user.get("email"),
+    }
+    return RedirectResponse(url="/")
+
+
+async def auth_logout(request: Request):
+    """清除本地会话，并跳转到 Zitadel 登出端点"""
+    request.session.pop("user", None)
+    metadata = await oauth.zitadel.load_server_metadata()
+    end_session_endpoint = metadata.get("end_session_endpoint")
+    if end_session_endpoint:
+        return RedirectResponse(
+            url=f"{end_session_endpoint}?post_logout_redirect_uri={APP_BASE_URL.rstrip('/')}"
+        )
+    return RedirectResponse(url="/")
+
+
+class AuthRequiredMiddleware:
+    """未登录时拦截页面访问，强制跳转到 Zitadel 登录。
+    仅放行登录/回调/登出路由以及 Gradio 静态资源、心跳等接口。
+    """
+
+    _PUBLIC_PREFIXES = ("/auth/", "/static", "/gradio_api/heartbeat", "/theme.css", "/favicon")
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if path.startswith(self._PUBLIC_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+        request = Request(scope, receive=receive)
+        if _is_logged_in(request):
+            await self.app(scope, receive, send)
+            return
+        response = RedirectResponse(url="/auth/login")
+        await response(scope, receive, send)
+
+
 # 创建 Gradio 界面
 with gr.Blocks(
     title="BabelDOC 论文翻译 - DeepSeek",
@@ -784,10 +878,19 @@ with gr.Blocks(
     css="""
     /* ===== 主题变量：亮色（默认） ===== */
     :root {
-        --log-bg: #1a1a2e;
-        --log-border: #333;
-        --log-fg: #d4d4d8;
+        --log-bg: #f7f7fb;
+        --log-border: #ECECF4;
+        --log-fg: #333333;
         --log-muted: #888;
+        --log-error: #D32F2F;
+        --log-warning: #B26A00;
+        --log-info: #333333;
+        --log-plain: #999999;
+        --log-separator: #ECECF4;
+        --progress-track-bg: #e6e6ef;
+        --progress-track-border: #d8d8e4;
+        --progress-pending: #d8d8e4;
+        --progress-divider: #f7f7fb;
         --brand: #6C5CE7;
         --brand-light: #A29BFE;
         --card-bg: #ffffff;
@@ -806,6 +909,15 @@ with gr.Blocks(
         --log-border: #34343f;
         --log-fg: #d4d4d8;
         --log-muted: #9a9aa8;
+        --log-error: #F44336;
+        --log-warning: #FFB74D;
+        --log-info: #E0E0E0;
+        --log-plain: #999999;
+        --log-separator: #333333;
+        --progress-track-bg: #222222;
+        --progress-track-border: #444444;
+        --progress-pending: #3a3a4a;
+        --progress-divider: #1a1a2e;
         --brand: #A29BFE;
         --brand-light: #6C5CE7;
         --card-bg: #23232f;
@@ -921,14 +1033,14 @@ with gr.Blocks(
         font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
     }
 
-    .log-error  { color: #F44336; }
-    .log-warning { color: #FFB74D; }
-    .log-info   { color: #E0E0E0; }
-    .log-plain  { color: #999; }
+    .log-error  { color: var(--log-error); }
+    .log-warning { color: var(--log-warning); }
+    .log-info   { color: var(--log-info); }
+    .log-plain  { color: var(--log-plain); }
 
     .log-separator {
         height: 0;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--log-separator);
         margin: 4px 0;
     }
 
@@ -979,32 +1091,33 @@ with gr.Blocks(
     .progress-area {
         margin-bottom: 8px;
         padding-bottom: 8px;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--log-separator);
     }
     .progress-text {
         font-size: 12px;
         display: block;
         margin-bottom: 4px;
+        color: var(--log-fg);
     }
     .progress-bar {
         width: 100%;
         height: 16px;
-        background: #222;
+        background: var(--progress-track-bg);
         border-radius: 8px;
         overflow: hidden;
         display: flex;
-        border: 1px solid #444;
+        border: 1px solid var(--progress-track-border);
     }
     .progress-bar > div {
         height: 100%;
-        border-right: 2px solid #1a1a2e;
+        border-right: 2px solid var(--progress-divider);
         transition: background 0.3s;
     }
 
     /* 进度条分段颜色 */
     .pg-done    { background: #4CAF50; }
     .pg-current { background: #4FC3F7; animation: pulse-current 1.2s ease-in-out infinite; }
-    .pg-pending { background: #3a3a4a; }
+    .pg-pending { background: var(--progress-pending); }
 
     @keyframes pulse-current {
         0%, 100% { opacity: 1; }
@@ -1383,8 +1496,31 @@ with gr.Blocks(
 
 
 if __name__ == "__main__":
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=7865,
-        show_error=True,
-    )
+    if ZITADEL_CLIENT_ID and ZITADEL_CLIENT_SECRET:
+        # 启用 Zitadel 登录认证：创建独立 FastAPI app，挂载认证路由与中间件，
+        # 再将 Gradio 挂载到该 app 上，最后用 uvicorn 启动
+        import uvicorn
+        from fastapi import FastAPI
+
+        app = FastAPI()
+        app.add_route("/auth/login", auth_login, methods=["GET"])
+        app.add_route("/auth/callback", auth_callback, methods=["GET"])
+        app.add_route("/auth/logout", auth_logout, methods=["GET"])
+        # 中间件后添加的先执行，AuthRequiredMiddleware 需要用到 request.session，
+        # 因此必须晚于 SessionMiddleware 添加，使其运行在 SessionMiddleware 外层
+        app.add_middleware(AuthRequiredMiddleware)
+        app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax")
+
+        gr.mount_gradio_app(app, demo, path="/", auth_dependency=gradio_auth_dependency)
+        uvicorn.run(app, host="0.0.0.0", port=7865)
+    else:
+        print(
+            "⚠️ 未配置 ZITADEL_CLIENT_ID / ZITADEL_CLIENT_SECRET 环境变量，"
+            "本次启动不启用登录认证保护",
+            file=_sys.stderr,
+        )
+        demo.launch(
+            server_name="0.0.0.0",
+            server_port=7865,
+            show_error=True,
+        )

@@ -14,8 +14,9 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: babeldoc-translator
-    ports:
-      - "7865:7865"
+    # 使用 host 网络模式：与宿主机共享网络栈，避免容器内访问 auth.folink.site 时
+    # 因公网 IP hairpin NAT 不通而导致 OAuth 登录超时（ConnectTimeout）
+    network_mode: host
     volumes:
       # 持久化 API 配置到本地文件（首次会自动创建，需先手动 touch 一个空文件）
       - ./babeldoc_config.json:/app/.babeldoc_config.json
@@ -25,6 +26,12 @@ services:
       - ./outputs:/app/outputs
     environment:
       - TZ=Asia/Shanghai
+      # Zitadel 登录认证配置（实际取值写在 .env 文件中，不要写入本文件）
+      - ZITADEL_ISSUER=${ZITADEL_ISSUER}
+      - ZITADEL_CLIENT_ID=${ZITADEL_CLIENT_ID}
+      - ZITADEL_CLIENT_SECRET=${ZITADEL_CLIENT_SECRET}
+      - APP_BASE_URL=${APP_BASE_URL}
+      - SESSION_SECRET=${SESSION_SECRET}
       # 如需通过代理访问 API，可取消注释
       # - HTTP_PROXY=http://host.docker.internal:7890
       # - HTTPS_PROXY=http://host.docker.internal:7890
