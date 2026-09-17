@@ -1,0 +1,3 @@
+# cmd.exe requires native Windows line endings for reliable batch parsing.
+# Keep CRLF bytes in the repository so source archives also work correctly.
+*.bat -text whitespace=cr-at-eol
