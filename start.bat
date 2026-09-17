@@ -5,11 +5,15 @@ set "APP_NAME=BabelDOC"
 set "APP_FILE=babeldoc_translator.py"
 set "PID_FILE=.babeldoc-windows.pid"
 set "LOG_DIR=logs"
-set "LOG_FILE=%LOG_DIR%\babeldoc-windows.log"
-set "ERROR_LOG_FILE=%LOG_DIR%\babeldoc-windows-error.log"
+set "LOG_FILE=%CD%\%LOG_DIR%\babeldoc-windows.log"
+set "ERROR_LOG_FILE=%CD%\%LOG_DIR%\babeldoc-windows-error.log"
 set "PORT=7865"
 
 cd /d "%~dp0"
+set "ROOT_DIR=%CD%"
+set "LOG_FILE=%ROOT_DIR%\%LOG_DIR%\babeldoc-windows.log"
+set "ERROR_LOG_FILE=%ROOT_DIR%\%LOG_DIR%\babeldoc-windows-error.log"
+set "PID_FILE=%ROOT_DIR%\.babeldoc-windows.pid"
 
 if /i "%~1"=="start" goto start_app
 if /i "%~1"=="stop" goto stop_app
@@ -19,18 +23,18 @@ if /i "%~1"=="logs" goto logs_app
 goto help
 
 :find_python
-if exist "%~dp0.venv\Scripts\python.exe" (
-    set "PYTHON=%~dp0.venv\Scripts\python.exe"
+if exist "%ROOT_DIR%\.venv\Scripts\python.exe" (
+    set "PYTHON=%ROOT_DIR%\.venv\Scripts\python.exe"
     set "PYTHON_ARGS="
     exit /b 0
 )
-where py >nul 2>&1
+where py.exe >nul 2>&1
 if not errorlevel 1 (
     set "PYTHON=py.exe"
     set "PYTHON_ARGS=-3"
     exit /b 0
 )
-where python >nul 2>&1
+where python.exe >nul 2>&1
 if not errorlevel 1 (
     set "PYTHON=python.exe"
     set "PYTHON_ARGS="
@@ -43,7 +47,7 @@ exit /b 1
 if not exist "%PID_FILE%" exit /b 1
 set /p APP_PID=<"%PID_FILE%"
 if not defined APP_PID exit /b 1
-tasklist /fi "PID eq %APP_PID%" /fo csv /nh | findstr /r /c:"%APP_PID%" >nul
+tasklist /fi "PID eq %APP_PID%" /fo csv /nh | findstr /c:"%APP_PID%" >nul
 if errorlevel 1 exit /b 1
 exit /b 0
 
@@ -56,19 +60,21 @@ if not errorlevel 1 (
 call :find_python
 if errorlevel 1 exit /b 1
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
-"%PYTHON%" -c "import gradio" >nul 2>&1
+"%PYTHON%" %PYTHON_ARGS% -c "import gradio" >nul 2>&1
 if errorlevel 1 (
     echo [提示] 正在安装 Python 依赖...
-    "%PYTHON%" -m pip install -r requirements.txt
+    "%PYTHON%" %PYTHON_ARGS% -m pip install -r requirements.txt
     if errorlevel 1 exit /b 1
 )
-start "BabelDOC" /b cmd /c ""%PYTHON%" %PYTHON_ARGS% "%APP_FILE%" >> "%CD%\%LOG_FILE%" 2>> "%CD%\%ERROR_LOG_FILE%""
-for /f "tokens=2 delims=," %%A in ('tasklist /v /fi "imagename eq cmd.exe" /fo csv /nh ^| findstr /i "BabelDOC"') do set "APP_PID=%%~A"
-if not defined APP_PID (
+set "BABELDOC_ROOT=%ROOT_DIR%"
+set "BABELDOC_LOG=%LOG_FILE%"
+set "BABELDOC_ERROR_LOG=%ERROR_LOG_FILE%"
+set "BABELDOC_PID=%PID_FILE%"
+"%PYTHON%" %PYTHON_ARGS% -c "import os,subprocess,sys; root=os.environ['BABELDOC_ROOT']; out=open(os.environ['BABELDOC_LOG'],'a',encoding='utf-8'); err=open(os.environ['BABELDOC_ERROR_LOG'],'a',encoding='utf-8'); p=subprocess.Popen([sys.executable,'babeldoc_translator.py'],cwd=root,stdout=out,stderr=err,creationflags=0x08000000); open(os.environ['BABELDOC_PID'],'w').write(str(p.pid))"
+if errorlevel 1 (
     echo [错误] 启动失败，请检查 %LOG_FILE% 和 %ERROR_LOG_FILE%
     exit /b 1
 )
->"%PID_FILE%" echo %APP_PID%
 timeout /t 2 /nobreak >nul
 call :check_process
 if errorlevel 1 (
