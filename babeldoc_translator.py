@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import html
 import uuid
 import base64
 import subprocess
@@ -461,6 +462,9 @@ _TASK: dict = {
     "task_id": None,           # 本次任务的历史记录 ID
     "finished": False,         # 任务是否已结束（成功/失败/停止）
     "extra_html": "",          # 结束时追加的提示 HTML
+    "last_activity": 0.0,      # 最近一次收到 BabelDOC 输出的时间
+    "warning_count": 0,        # BabelDOC 警告/降级重试次数
+    "last_warning": "",        # 最近一条警告，供长任务诊断
 }
 _task_lock = threading.Lock()
 
@@ -556,14 +560,14 @@ def _detect_stage_from_raw(raw: str) -> str | None:
     return None
 
 
-# ---- 进度条（阶段 + JS 计时器 + spinner）---- #
+# ---- 进度条（阶段 + 服务端计时器 + spinner）---- #
 def _build_progress_html(
     completed_stages: list[str],
     current_stage: str | None,
     start_time: float,
     active_serial: int = 0,
 ) -> str:
-    """构建进度条 HTML，含 CSS spinner、JS 计时器、alive 心跳"""
+    """构建进度条 HTML，含 CSS spinner、服务端计时器、alive 心跳。"""
     if not current_stage and not completed_stages:
         return ""
 
@@ -597,26 +601,12 @@ def _build_progress_html(
         else ""
     )
 
-    # JS 计时器（自清理，避免孤儿 interval）
-    timer_html = (
-        f'<span class="elapsed" id="elapsed-{active_serial}"></span>'
-        f'<script>(function(){{'
-        f'var start={start_time}*1000,sid="elapsed-{active_serial}";'
-        f'if(window._babeldocTimers){{'
-        f'window._babeldocTimers.forEach(clearInterval);'
-        f'}}window._babeldocTimers=[];'
-        f'var el=document.getElementById(sid);'
-        f'if(!el)return;'
-        f'var tid=setInterval(function(){{'
-        f'var e=document.getElementById(sid);'
-        f'if(!e){{clearInterval(tid);return;}}'
-        f'var s=Math.floor((Date.now()-start)/1000);'
-        f'var m=Math.floor(s/60);s=s%60;'
-        f'e.textContent="(已用 "+(m>0?m+"m":"")+s+"s)";'
-        f'}},1000);'
-        f'window._babeldocTimers.push(tid);'
-        f'}})();</script>'
-    )
+    # Gradio 通过 innerHTML 更新 gr.HTML，不会执行其中的 script 标签。
+    # 计时值由 resume_progress 的服务端心跳每秒重新渲染。
+    elapsed = max(0, int(time.time() - start_time))
+    minutes, seconds = divmod(elapsed, 60)
+    elapsed_text = f"{minutes}m{seconds}s" if minutes else f"{seconds}s"
+    timer_html = f'<span class="elapsed">(本阶段 {elapsed_text})</span>'
 
     return (
         '<div class="progress-area">'
@@ -653,9 +643,28 @@ def _task_snapshot_html(extra: str = "") -> str:
         stage_start = _TASK["stage_start"]
         active_serial = _TASK["active_serial"]
         status_lines = list(_TASK["status_lines"])
+        last_activity = _TASK["last_activity"]
+        warning_count = _TASK["warning_count"]
+        last_warning = _TASK["last_warning"]
+    live_status = ""
+    if current_stage and last_activity:
+        idle_seconds = max(0, int(time.time() - last_activity))
+        live_status = (
+            '<div class="log-line log-info" style="font-size:12px">'
+            f"&#128994; 子进程运行中 · 最近输出 {idle_seconds}s 前"
+        )
+        if warning_count:
+            live_status += f" · 已发生 {warning_count} 次警告/降级重试"
+        live_status += "</div>"
+        if last_warning:
+            live_status += (
+                '<div class="log-line log-warning" style="font-size:12px">'
+                "最近警告: " + html.escape(last_warning[:240]) + "</div>"
+            )
     return (
         _build_progress_html(completed_stages, current_stage, stage_start, active_serial)
         + "".join(status_lines)
+        + live_status
         + extra
     )
 
@@ -768,6 +777,9 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
             print(f"{tag}{ts} {msg}", file=_sys.stderr)
             key = msg[:60]
             _error_warn_count[key] = _error_warn_count.get(key, 0) + 1
+            with _task_lock:
+                _TASK["warning_count"] += 1
+                _TASK["last_warning"] = msg
             return
 
         # ---- INFO 级别 ----
@@ -939,6 +951,8 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
             raw = line.rstrip()
             if not raw:
                 continue
+            with _task_lock:
+                _TASK["last_activity"] = time.time()
 
             if raw.startswith(" ") or raw.startswith("\t") or not raw.startswith("["):
                 log_buffer += " " + raw.strip()
@@ -1114,6 +1128,9 @@ def translate_pdf(
             task_id=None,
             finished=False,
             extra_html="",
+            last_activity=time.time(),
+            warning_count=0,
+            last_warning="",
         )
 
     worker = threading.Thread(
@@ -1131,6 +1148,7 @@ def resume_progress():
     可安全被取消（如页面刷新导致的生成器取消）——不会影响后台翻译线程。
     """
     last_len = -1
+    next_heartbeat = 0.0
     while True:
         with _task_lock:
             running = _TASK["running"]
@@ -1146,8 +1164,10 @@ def resume_progress():
             yield result_files, _task_snapshot_html(extra_html), output_dir
             return
 
-        if cur_len != last_len:
+        now = time.monotonic()
+        if cur_len != last_len or now >= next_heartbeat:
             last_len = cur_len
+            next_heartbeat = now + 1.0
             yield None, _task_snapshot_html(), output_dir
 
         if not running:
