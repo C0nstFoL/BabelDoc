@@ -96,11 +96,11 @@ docker compose up -d --build --force-recreate
 
 ### 方式二：本地 Python
 
-1. 安装 Python 3.10 或更高版本，并在安装程序中勾选 **Add Python to PATH**。
+1. 安装 Python 3.10、3.11、3.12 或 3.13，推荐 Python 3.12，并在安装程序中勾选 **Add Python to PATH**。当前不支持 Python 3.14。
 2. 在 PowerShell 中进入项目目录，创建虚拟环境并安装依赖：
 
 ```powershell
-py -3 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
