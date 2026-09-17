@@ -68,12 +68,15 @@ New-Item -ItemType Directory -Force outputs
 4. 如果需要 OIDC 登录，在项目根目录创建 `.env`，填写以下变量；不使用登录认证时可以省略 `.env`：
 
 ```dotenv
+AUTH_ENABLED=false
 ZITADEL_ISSUER=https://your-zitadel.example.com
 ZITADEL_CLIENT_ID=
 ZITADEL_CLIENT_SECRET=
 APP_BASE_URL=http://localhost:7865
 SESSION_SECRET=请替换为随机字符串
 ```
+
+需要启用 OIDC 登录时，将 `AUTH_ENABLED` 改为 `true`，并填写 `ZITADEL_CLIENT_ID`、`ZITADEL_CLIENT_SECRET`、`ZITADEL_ISSUER` 和 `APP_BASE_URL`。不启用认证时保持 `AUTH_ENABLED=false` 即可。
 
 5. 构建并启动：
 
@@ -120,6 +123,8 @@ python babeldoc_translator.py
 Windows 本地运行不使用 Linux 专用的 `start.sh`；需要停止服务时，在运行 Python 的 PowerShell 窗口按 `Ctrl+C` 即可。
 
 ## 配置
+
+认证由环境变量 `AUTH_ENABLED` 控制，默认值为 `false`。没有 OIDC 服务时保持关闭即可；只有将其设为 `true`，并同时填写完整的 Zitadel 配置后，应用才会启用登录保护。
 
 首次打开页面后，在界面中填写 API Key / Base URL / 模型名称并保存，配置会写入项目根目录下的本地文件：
 

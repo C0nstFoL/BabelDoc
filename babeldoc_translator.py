@@ -23,6 +23,12 @@ from authlib.integrations.starlette_client import OAuth
 ZITADEL_ISSUER = os.environ.get("ZITADEL_ISSUER", "https://auth.folink.site")
 ZITADEL_CLIENT_ID = os.environ.get("ZITADEL_CLIENT_ID", "")
 ZITADEL_CLIENT_SECRET = os.environ.get("ZITADEL_CLIENT_SECRET", "")
+AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 # 完整外部访问地址（用于拼接 OIDC 回调地址），例如 https://translate.folink.site
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://translate.folink.site")
 # 用于加密登录会话 Cookie，生产环境务必通过环境变量设置固定值，
@@ -2433,7 +2439,12 @@ with gr.Blocks(
 
 
 if __name__ == "__main__":
-    if ZITADEL_CLIENT_ID and ZITADEL_CLIENT_SECRET:
+    if AUTH_ENABLED:
+        if not ZITADEL_CLIENT_ID or not ZITADEL_CLIENT_SECRET:
+            raise SystemExit(
+                "AUTH_ENABLED=true requires ZITADEL_CLIENT_ID and "
+                "ZITADEL_CLIENT_SECRET"
+            )
         # 启用 Zitadel 登录认证：创建独立 FastAPI app，挂载认证路由与中间件，
         # 再将 Gradio 挂载到该 app 上，最后用 uvicorn 启动
         import uvicorn
@@ -2452,8 +2463,7 @@ if __name__ == "__main__":
         uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 7865)))
     else:
         print(
-            "⚠️ 未配置 ZITADEL_CLIENT_ID / ZITADEL_CLIENT_SECRET 环境变量，"
-            "本次启动不启用登录认证保护",
+            "⚠️ AUTH_ENABLED 未开启，本次启动不启用登录认证保护",
             file=_sys.stderr,
         )
         demo.launch(

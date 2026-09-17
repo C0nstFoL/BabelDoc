@@ -33,6 +33,8 @@ services:
       - ./babeldoc_translator.py:/app/babeldoc_translator.py
     environment:
       - TZ=Asia/Shanghai
+      # 是否启用 Zitadel 登录认证，默认关闭；启用时设为 true 并填写下方 OIDC 配置
+      - AUTH_ENABLED=${AUTH_ENABLED:-false}
       # Zitadel 登录认证配置（实际取值写在 .env 文件中，不要写入本文件）
       - ZITADEL_ISSUER=${ZITADEL_ISSUER}
       - ZITADEL_CLIENT_ID=${ZITADEL_CLIENT_ID}
