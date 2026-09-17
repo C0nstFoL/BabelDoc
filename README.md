@@ -43,9 +43,9 @@ pip install -r requirements.txt
 或直接前台运行：
 
 ```bash
-python babeldoc_translator.py
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
-
 ## Windows 部署
 
 ### 方式一：Docker Desktop（推荐）
@@ -106,25 +106,19 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-如果 PowerShell 禁止执行脚本，可先运行：
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-
 3. 启动应用：
 
-```powershell
-.\start.ps1 start
+```bat
+start.bat start
 ```
 
 查看状态、日志、重启和停止：
 
-```powershell
-.\start.ps1 status
-.\start.ps1 logs
-.\start.ps1 restart
-.\start.ps1 stop
+```bat
+start.bat status
+start.bat logs
+start.bat restart
+start.bat stop
 ```
 
 也可以直接前台运行：
@@ -160,7 +154,7 @@ Docker 部署时这些文件通过 volume 挂载持久化到宿主机同名文�
 | `babeldoc_translator.py` | 主程序（Gradio 应用） |
 | `Dockerfile` / `docker-compose.yml` | Docker 部署配置 |
 | `start.sh` | 本地后台运行管理脚本 |
-| `start.ps1` | Windows 后台运行管理脚本 |
+| `start.bat` | Windows 后台运行管理脚本 |
 | `.babeldoc_config.json` | API 配置（含敏感信息，勿分享） |
 | `.babeldoc_history.json` | 历史任务记录（含敏感信息，勿分享） |
 | `outputs/` | 历史任务文件（原文/译文 PDF） |
