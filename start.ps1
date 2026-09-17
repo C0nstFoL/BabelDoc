@@ -5,6 +5,7 @@ $AppFile = "babeldoc_translator.py"
 $PidFile = ".babeldoc-windows.pid"
 $LogDir = "logs"
 $LogFile = Join-Path $LogDir "babeldoc-windows.log"
+$ErrorLogFile = Join-Path $LogDir "babeldoc-windows-error.log"
 $Port = 7865
 
 Set-Location $PSScriptRoot
@@ -29,8 +30,8 @@ function Get-AppProcess {
     if (-not (Test-Path $PidFile)) {
         return $null
     }
-    $pid = Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($pid -and ($process = Get-Process -Id ([int]$pid) -ErrorAction SilentlyContinue)) {
+    $processId = Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($processId -and ($process = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue)) {
         return $process
     }
     return $null
@@ -59,7 +60,7 @@ function Start-App {
         -ArgumentList $AppFile `
         -WorkingDirectory $PSScriptRoot `
         -RedirectStandardOutput $LogFile `
-        -RedirectStandardError $LogFile `
+        -RedirectStandardError $ErrorLogFile `
         -PassThru
     Set-Content -Path $PidFile -Value $process.Id
     Start-Sleep -Seconds 2
