@@ -33,26 +33,10 @@ if not exist "%ROOT_DIR%\.babeldoc_config.json" type nul > "%ROOT_DIR%\.babeldoc
 if not exist "%ROOT_DIR%\.babeldoc_history.json" type nul > "%ROOT_DIR%\.babeldoc_history.json"
 if not exist "%ROOT_DIR%\outputs" mkdir "%ROOT_DIR%\outputs"
 
-if not exist "%ROOT_DIR%\.venv\Scripts\python.exe" (
-    where py.exe >nul 2>&1
-    if not errorlevel 1 (
-        echo Creating Python virtual environment...
-        py.exe -3 -m venv "%ROOT_DIR%\.venv"
-    ) else (
-        where python.exe >nul 2>&1
-        if errorlevel 1 (
-            echo [ERROR] Python 3.10+ was not found. Install Python and try again.
-            pause
-            exit /b 1
-        )
-        echo Creating Python virtual environment...
-        python.exe -m venv "%ROOT_DIR%\.venv"
-    )
-    if errorlevel 1 (
-        echo [ERROR] Failed to create the virtual environment.
-        pause
-        exit /b 1
-    )
+call :ensure_venv
+if errorlevel 1 (
+    pause
+    exit /b 1
 )
 
 call :start_app
@@ -64,24 +48,69 @@ exit /b %DEPLOY_EXIT%
 
 :find_python
 if exist "%ROOT_DIR%\.venv\Scripts\python.exe" (
-    set "PYTHON=%ROOT_DIR%\.venv\Scripts\python.exe"
-    set "PYTHON_ARGS="
-    exit /b 0
+    "%ROOT_DIR%\.venv\Scripts\python.exe" -c "import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) else 1)" >nul 2>&1
+    if errorlevel 1 (
+        echo [INFO] Existing virtual environment uses an unsupported Python version. Recreating it...
+        rmdir /s /q "%ROOT_DIR%\.venv"
+    ) else (
+        set "PYTHON=%ROOT_DIR%\.venv\Scripts\python.exe"
+        set "PYTHON_ARGS="
+        exit /b 0
+    )
 )
+call :find_compatible_python
+exit /b %errorlevel%
+
+:ensure_venv
+if exist "%ROOT_DIR%\.venv\Scripts\python.exe" (
+    "%ROOT_DIR%\.venv\Scripts\python.exe" -c "import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) else 1)" >nul 2>&1
+    if not errorlevel 1 exit /b 0
+    echo [INFO] Existing virtual environment uses an unsupported Python version. Recreating it...
+    rmdir /s /q "%ROOT_DIR%\.venv"
+)
+call :find_compatible_python
+if errorlevel 1 (
+    echo [ERROR] Python 3.10-3.13 was not found. Install Python 3.12 and try again.
+    exit /b 1
+)
+echo Creating Python virtual environment...
+"%PYTHON%" %PYTHON_ARGS% -m venv "%ROOT_DIR%\.venv"
+if errorlevel 1 (
+    echo [ERROR] Failed to create the virtual environment.
+    exit /b 1
+)
+exit /b 0
+
+:find_compatible_python
 where py.exe >nul 2>&1
+if errorlevel 1 goto try_python_command
+py.exe -3.12 -c "import sys" >nul 2>&1
 if not errorlevel 1 (
     set "PYTHON=py.exe"
-    set "PYTHON_ARGS=-3"
+    set "PYTHON_ARGS=-3.12"
     exit /b 0
 )
-where python.exe >nul 2>&1
+py.exe -3.11 -c "import sys" >nul 2>&1
 if not errorlevel 1 (
-    set "PYTHON=python.exe"
-    set "PYTHON_ARGS="
+    set "PYTHON=py.exe"
+    set "PYTHON_ARGS=-3.11"
     exit /b 0
 )
-echo [ERROR] Python 3.10+ was not found. Install Python and add it to PATH.
-exit /b 1
+py.exe -3.10 -c "import sys" >nul 2>&1
+if not errorlevel 1 (
+    set "PYTHON=py.exe"
+    set "PYTHON_ARGS=-3.10"
+    exit /b 0
+)
+
+:try_python_command
+where python.exe >nul 2>&1
+if errorlevel 1 exit /b 1
+python.exe -c "import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) else 1)" >nul 2>&1
+if errorlevel 1 exit /b 1
+set "PYTHON=python.exe"
+set "PYTHON_ARGS="
+exit /b 0
 
 :check_process
 if not exist "%PID_FILE%" exit /b 1
