@@ -80,7 +80,7 @@ if not errorlevel 1 (
     set "PYTHON_ARGS="
     exit /b 0
 )
-echo [错误] 未找到 Python 3.10+，请先安装 Python 并将其加入 PATH。
+echo [ERROR] Python 3.10+ was not found. Install Python and add it to PATH.
 exit /b 1
 
 :check_process
@@ -94,49 +94,53 @@ exit /b 0
 :start_app
 call :check_process
 if not errorlevel 1 (
-    echo [提示] %APP_NAME% 已在运行中，PID: %APP_PID%
+    echo [INFO] %APP_NAME% is already running. PID: %APP_PID%
     exit /b 0
 )
 call :find_python
 if errorlevel 1 exit /b 1
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
-"%PYTHON%" %PYTHON_ARGS% -c "import gradio" >nul 2>&1
+"%PYTHON%" %PYTHON_ARGS% -c "import gradio, babeldoc, authlib, ocrmypdf" >nul 2>&1
 if errorlevel 1 (
-    echo [提示] 正在安装 Python 依赖...
+    echo [INFO] Installing Python dependencies...
     "%PYTHON%" %PYTHON_ARGS% -m pip install -r requirements.txt
-    if errorlevel 1 exit /b 1
+    if errorlevel 1 (
+        echo [ERROR] Failed to install Python dependencies.
+        exit /b 1
+    )
 )
 set "BABELDOC_ROOT=%ROOT_DIR%"
+set "BABELDOC_APP=%APP_FILE%"
 set "BABELDOC_LOG=%LOG_FILE%"
 set "BABELDOC_ERROR_LOG=%ERROR_LOG_FILE%"
 set "BABELDOC_PID=%PID_FILE%"
-"%PYTHON%" %PYTHON_ARGS% -c "import os,subprocess,sys; root=os.environ['BABELDOC_ROOT']; out=open(os.environ['BABELDOC_LOG'],'a',encoding='utf-8'); err=open(os.environ['BABELDOC_ERROR_LOG'],'a',encoding='utf-8'); p=subprocess.Popen([sys.executable,'babeldoc_translator.py'],cwd=root,stdout=out,stderr=err,creationflags=0x08000000); open(os.environ['BABELDOC_PID'],'w').write(str(p.pid))"
+"%PYTHON%" %PYTHON_ARGS% -c "import os,subprocess,sys; root=os.environ['BABELDOC_ROOT']; out=open(os.environ['BABELDOC_LOG'],'a',encoding='utf-8'); err=open(os.environ['BABELDOC_ERROR_LOG'],'a',encoding='utf-8'); p=subprocess.Popen([sys.executable,os.environ['BABELDOC_APP']],cwd=root,stdout=out,stderr=err,creationflags=0x08000000); open(os.environ['BABELDOC_PID'],'w').write(str(p.pid))"
 if errorlevel 1 (
-    echo [错误] 启动失败，请检查 %LOG_FILE% 和 %ERROR_LOG_FILE%
+    echo [ERROR] Startup failed. Check %LOG_FILE% and %ERROR_LOG_FILE%
     exit /b 1
 )
 timeout /t 2 /nobreak >nul
 call :check_process
 if errorlevel 1 (
     del /q "%PID_FILE%" >nul 2>&1
-    echo [错误] 启动失败，请检查 %LOG_FILE% 和 %ERROR_LOG_FILE%
+    echo [ERROR] Startup failed. Check %LOG_FILE% and %ERROR_LOG_FILE%
     exit /b 1
 )
-echo [成功] %APP_NAME% 已启动，PID: %APP_PID%
-echo 访问地址: http://localhost:%PORT%
-echo 查看日志: start.bat logs
+echo [OK] %APP_NAME% started. PID: %APP_PID%
+echo URL: http://localhost:%PORT%
+echo Logs: start.bat logs
 exit /b 0
 
 :stop_app
 call :check_process
 if errorlevel 1 (
     del /q "%PID_FILE%" >nul 2>&1
-    echo [提示] %APP_NAME% 当前未运行
+    echo [INFO] %APP_NAME% is not running.
     exit /b 0
 )
 taskkill /pid %APP_PID% /t /f >nul 2>&1
 del /q "%PID_FILE%" >nul 2>&1
-echo [成功] %APP_NAME% 已停止
+echo [OK] %APP_NAME% stopped.
 exit /b 0
 
 :restart_app
@@ -147,28 +151,28 @@ exit /b %errorlevel%
 :status_app
 call :check_process
 if errorlevel 1 (
-    echo 状态: 未运行
+    echo Status: stopped
 ) else (
-    echo 状态: 运行中
+    echo Status: running
     echo PID: %APP_PID%
-    echo 访问地址: http://localhost:%PORT%
-    echo 日志: %LOG_FILE%
+    echo URL: http://localhost:%PORT%
+    echo Log: %LOG_FILE%
 )
 exit /b 0
 
 :logs_app
 if not exist "%LOG_FILE%" (
-    echo [提示] 日志文件不存在: %LOG_FILE%
+    echo [INFO] Log file does not exist: %LOG_FILE%
     exit /b 1
 )
 type "%LOG_FILE%"
 if exist "%ERROR_LOG_FILE%" (
     echo.
-    echo ===== 错误日志 =====
+    echo ===== Error log =====
     type "%ERROR_LOG_FILE%"
 )
 exit /b 0
 
 :help
-echo 用法: start.bat {start^|stop^|restart^|status^|logs}
+echo Usage: start.bat {start^|stop^|restart^|status^|logs}
 exit /b 0
