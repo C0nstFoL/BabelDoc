@@ -115,10 +115,25 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 3. 启动应用：
 
 ```powershell
+.\start.ps1 start
+```
+
+查看状态、日志、重启和停止：
+
+```powershell
+.\start.ps1 status
+.\start.ps1 logs
+.\start.ps1 restart
+.\start.ps1 stop
+```
+
+也可以直接前台运行：
+
+```powershell
 python babeldoc_translator.py
 ```
 
-4. 浏览器访问 <http://localhost:7865>。配置和翻译结果会保存在项目目录中的 `.babeldoc_config.json`、`.babeldoc_history.json` 和 `outputs/`。
+配置和翻译结果会保存在项目目录中的 `.babeldoc_config.json`、`.babeldoc_history.json` 和 `outputs/`。
 
 Windows 本地运行不使用 Linux 专用的 `start.sh`；需要停止服务时，在运行 Python 的 PowerShell 窗口按 `Ctrl+C` 即可。
 
@@ -145,6 +160,7 @@ Docker 部署时这些文件通过 volume 挂载持久化到宿主机同名文�
 | `babeldoc_translator.py` | 主程序（Gradio 应用） |
 | `Dockerfile` / `docker-compose.yml` | Docker 部署配置 |
 | `start.sh` | 本地后台运行管理脚本 |
+| `start.ps1` | Windows 后台运行管理脚本 |
 | `.babeldoc_config.json` | API 配置（含敏感信息，勿分享） |
 | `.babeldoc_history.json` | 历史任务记录（含敏感信息，勿分享） |
 | `outputs/` | 历史任务文件（原文/译文 PDF） |
