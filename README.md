@@ -109,12 +109,15 @@ python -m pip install -r requirements.txt
 3. 启动应用：
 
 ```bat
-start.bat start
+start.bat
 ```
+
+也可以直接双击 `start.bat`，脚本会自动创建 Python 虚拟环境、安装依赖、创建运行数据文件并启动服务。
 
 查看状态、日志、重启和停止：
 
 ```bat
+start.bat start
 start.bat status
 start.bat logs
 start.bat restart

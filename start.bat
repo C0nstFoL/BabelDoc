@@ -20,7 +20,47 @@ if /i "%~1"=="stop" goto stop_app
 if /i "%~1"=="restart" goto restart_app
 if /i "%~1"=="status" goto status_app
 if /i "%~1"=="logs" goto logs_app
+if "%~1"=="" goto deploy_app
 goto help
+
+:deploy_app
+echo ========================================
+echo   BabelDOC Windows one-click setup
+echo ========================================
+echo.
+
+if not exist "%ROOT_DIR%\.babeldoc_config.json" type nul > "%ROOT_DIR%\.babeldoc_config.json"
+if not exist "%ROOT_DIR%\.babeldoc_history.json" type nul > "%ROOT_DIR%\.babeldoc_history.json"
+if not exist "%ROOT_DIR%\outputs" mkdir "%ROOT_DIR%\outputs"
+
+if not exist "%ROOT_DIR%\.venv\Scripts\python.exe" (
+    where py.exe >nul 2>&1
+    if not errorlevel 1 (
+        echo Creating Python virtual environment...
+        py.exe -3 -m venv "%ROOT_DIR%\.venv"
+    ) else (
+        where python.exe >nul 2>&1
+        if errorlevel 1 (
+            echo [ERROR] Python 3.10+ was not found. Install Python and try again.
+            pause
+            exit /b 1
+        )
+        echo Creating Python virtual environment...
+        python.exe -m venv "%ROOT_DIR%\.venv"
+    )
+    if errorlevel 1 (
+        echo [ERROR] Failed to create the virtual environment.
+        pause
+        exit /b 1
+    )
+)
+
+call :start_app
+set "DEPLOY_EXIT=%errorlevel%"
+echo.
+if "%DEPLOY_EXIT%"=="0" echo Open http://localhost:%PORT% in your browser.
+pause
+exit /b %DEPLOY_EXIT%
 
 :find_python
 if exist "%ROOT_DIR%\.venv\Scripts\python.exe" (
