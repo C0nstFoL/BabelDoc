@@ -20,10 +20,10 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse
 from authlib.integrations.starlette_client import OAuth
 
-# ---- Zitadel OIDC 认证配置 ---- #
-ZITADEL_ISSUER = os.environ.get("ZITADEL_ISSUER", "https://auth.folink.site")
-ZITADEL_CLIENT_ID = os.environ.get("ZITADEL_CLIENT_ID", "")
-ZITADEL_CLIENT_SECRET = os.environ.get("ZITADEL_CLIENT_SECRET", "")
+# ---- OIDC 认证配置 ---- #
+OIDC_ISSUER = os.environ.get("OIDC_ISSUER", "").strip()
+OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
+OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
 AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "false").strip().lower() in {
     "1",
     "true",
@@ -1185,13 +1185,13 @@ def cleanup_temp(temp_dir):
             pass
 
 
-# ---- Zitadel OIDC 认证 ---- #
+# ---- OIDC 认证 ---- #
 oauth = OAuth()
 oauth.register(
-    name="zitadel",
-    server_metadata_url=f"{ZITADEL_ISSUER.rstrip('/')}/.well-known/openid-configuration",
-    client_id=ZITADEL_CLIENT_ID,
-    client_secret=ZITADEL_CLIENT_SECRET,
+    name="oidc",
+    server_metadata_url=f"{OIDC_ISSUER.rstrip('/')}/.well-known/openid-configuration",
+    client_id=OIDC_CLIENT_ID,
+    client_secret=OIDC_CLIENT_SECRET,
     client_kwargs={"scope": "openid profile email"},
 )
 
@@ -1207,15 +1207,15 @@ def gradio_auth_dependency(request: Request) -> str | None:
 
 
 async def auth_login(request: Request):
-    """跳转到 Zitadel 登录页"""
+    """跳转到 OIDC provider 登录页"""
     redirect_uri = f"{APP_BASE_URL.rstrip('/')}/auth/callback"
-    return await oauth.zitadel.authorize_redirect(request, redirect_uri)
+    return await oauth.oidc.authorize_redirect(request, redirect_uri)
 
 
 async def auth_callback(request: Request):
-    """Zitadel 登录回调：换取 token 并写入 session"""
+    """OIDC 登录回调：换取 token 并写入 session"""
     try:
-        token = await oauth.zitadel.authorize_access_token(request)
+        token = await oauth.oidc.authorize_access_token(request)
     except Exception as e:
         return RedirectResponse(url="/auth/login")
     user = token.get("userinfo") or {}
@@ -1228,9 +1228,9 @@ async def auth_callback(request: Request):
 
 
 async def auth_logout(request: Request):
-    """清除本地会话，并跳转到 Zitadel 登出端点"""
+    """清除本地会话，并跳转到 OIDC provider 登出端点"""
     request.session.pop("user", None)
-    metadata = await oauth.zitadel.load_server_metadata()
+    metadata = await oauth.oidc.load_server_metadata()
     end_session_endpoint = metadata.get("end_session_endpoint")
     if end_session_endpoint:
         return RedirectResponse(
@@ -1240,7 +1240,7 @@ async def auth_logout(request: Request):
 
 
 class AuthRequiredMiddleware:
-    """未登录时拦截页面访问，强制跳转到 Zitadel 登录。
+    """未登录时拦截页面访问，强制跳转到 OIDC provider 登录。
     仅放行登录/回调/登出路由以及 Gradio 静态资源、心跳等接口。
     """
 
@@ -2460,12 +2460,12 @@ with gr.Blocks(
 
 if __name__ == "__main__":
     if AUTH_ENABLED:
-        if not ZITADEL_CLIENT_ID or not ZITADEL_CLIENT_SECRET:
+        if not OIDC_ISSUER or not OIDC_CLIENT_ID or not OIDC_CLIENT_SECRET:
             raise SystemExit(
-                "AUTH_ENABLED=true requires ZITADEL_CLIENT_ID and "
-                "ZITADEL_CLIENT_SECRET"
+                "AUTH_ENABLED=true requires OIDC_ISSUER, OIDC_CLIENT_ID, "
+                "and OIDC_CLIENT_SECRET"
             )
-        # 启用 Zitadel 登录认证：创建独立 FastAPI app，挂载认证路由与中间件，
+        # 启用 OIDC 登录认证：创建独立 FastAPI app，挂载认证路由与中间件，
         # 再将 Gradio 挂载到该 app 上，最后用 uvicorn 启动
         import uvicorn
         from fastapi import FastAPI

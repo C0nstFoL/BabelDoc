@@ -16,7 +16,7 @@ services:
       # 构建时使用宿主机网络，避免 build 容器 DNS 间歇性解析失败
       network: host
     container_name: babeldoc-translator
-    # 使用 host 网络模式：与宿主机共享网络栈，避免容器内访问 auth.folink.site 时
+    # 使用 host 网络模式：与宿主机共享网络栈，避免容器访问 OIDC 服务时
     # 因公网 IP hairpin NAT 不通而导致 OAuth 登录超时（ConnectTimeout）
     network_mode: host
     volumes:
@@ -33,12 +33,12 @@ services:
       - ./babeldoc_translator.py:/app/babeldoc_translator.py
     environment:
       - TZ=Asia/Shanghai
-      # 是否启用 Zitadel 登录认证，默认关闭；启用时设为 true 并填写下方 OIDC 配置
+      # 是否启用 OIDC 登录认证，默认关闭；启用时设为 true 并填写下方配置
       - AUTH_ENABLED=${AUTH_ENABLED:-false}
-      # Zitadel 登录认证配置（实际取值写在 .env 文件中，不要写入本文件）
-      - ZITADEL_ISSUER=${ZITADEL_ISSUER}
-      - ZITADEL_CLIENT_ID=${ZITADEL_CLIENT_ID}
-      - ZITADEL_CLIENT_SECRET=${ZITADEL_CLIENT_SECRET}
+      # OIDC 登录认证配置（实际取值写在 .env 文件中，不要写入本文件）
+      - OIDC_ISSUER=${OIDC_ISSUER}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
       - APP_BASE_URL=${APP_BASE_URL}
       - SESSION_SECRET=${SESSION_SECRET}
       # 如需通过代理访问 API，可取消注释

@@ -1,14 +1,23 @@
-# BabelDOC 论文翻译工具
+# BabelDOC
 
-基于 [BabelDOC](https://github.com/funstory-ai/BabelDOC) 和 Gradio 构建的 PDF 论文翻译 Web 界面，支持 DeepSeek 及其他 OpenAI 兼容接口。
+### PDF 文档翻译，保留原文结构
 
-## 功能
+[![Latest Release](https://img.shields.io/github/v/release/C0nstFoL/BabelDoc?display_name=tag&sort=semver)](https://github.com/C0nstFoL/BabelDoc/releases/latest)
+[![License](https://img.shields.io/github/license/C0nstFoL/BabelDoc)](https://github.com/C0nstFoL/BabelDoc)
 
-- PDF 论文翻译，输出双语对照版（dual）和纯译文版（mono）
-- 亮色 / 暗色 / 跟随系统三种主题，自动记忆偏好
-- 历史任务列表：原文/译文在线预览、下载、删除
-- 翻译进度、阶段耗时和子进程心跳实时展示
-- 汇总显示模型响应警告与降级重试，便于区分长任务和程序卡死
+BabelDOC 是一个面向论文、课程资料和技术文档的 PDF 翻译工具。它基于 [BabelDOC](https://github.com/funstory-ai/BabelDOC) 构建，通过 OpenAI 兼容接口完成翻译，并提供简洁的 Web 界面管理任务和结果。
+
+当前版本：**v1.0.0** · [查看发布说明](https://github.com/C0nstFoL/BabelDoc/releases/tag/v1.0.0)
+
+## 主要功能
+
+- **双语与纯译文输出**：同时生成双语对照版（Dual）和纯译文版（Mono）。
+- **版式友好的 PDF 翻译**：尽量保留原文页面结构、段落和图文布局。
+- **兼容主流模型服务**：支持 DeepSeek 及其他 OpenAI 兼容 API。
+- **实时任务状态**：查看翻译阶段、耗时、进度和模型响应状态。
+- **历史任务管理**：在线预览、下载或删除过去的原文与译文。
+- **跨平台部署**：支持 Docker，也支持 Linux 和 Windows 本地运行。
+- **可选登录保护**：可通过任意兼容 OpenID Connect 的身份提供商启用登录认证。
 
 ## 快速开始
 
@@ -22,22 +31,22 @@ mkdir -p outputs
 docker compose up -d --build
 ```
 
-访问 http://localhost:7865
+打开 <http://localhost:7865>，在“管理预设”中填写 API Key、Base URL 和模型名称，即可开始翻译。
 
-本项目将主程序挂载到容器中。只修改 `babeldoc_translator.py` 时重启容器即可生效：
+修改配置或程序后，可使用以下命令管理服务：
 
 ```bash
 docker compose restart babeldoc
 ```
 
-如果修改了 `Dockerfile` 或 `requirements.txt`，则需要重新构建镜像：
+修改 `Dockerfile` 或 `requirements.txt` 后，请重新构建镜像：
 
 ```bash
 docker compose build babeldoc
 docker compose up -d --force-recreate
 ```
 
-### 方式二：本地运行
+### 本地运行
 
 ```bash
 pip install -r requirements.txt
@@ -53,9 +62,9 @@ pip install -r requirements.txt
 python babeldoc_translator.py
 ```
 
-## Windows 部署
+## Windows
 
-### 方式一：Docker Desktop（推荐）
+### Docker Desktop
 
 1. 安装并启动 [Docker Desktop](https://www.docker.com/products/docker-desktop/)，安装时启用 WSL 2 backend。
 2. 安装 Git，然后在 PowerShell 中执行：
@@ -65,25 +74,25 @@ git clone https://github.com/C0nstFoL/BabelDoc.git
 Set-Location BabelDoc
 ```
 
-3. 创建 Docker 需要挂载的本地文件和目录：
+3. 创建 Docker 需要使用的本地文件和目录：
 
 ```powershell
 New-Item -ItemType File -Force .babeldoc_config.json, .babeldoc_history.json
 New-Item -ItemType Directory -Force outputs
 ```
 
-4. 如果需要 OIDC 登录，在项目根目录创建 `.env`，填写以下变量；不使用登录认证时可以省略 `.env`：
+4. 如需启用 OIDC 登录，在项目根目录创建 `.env`：
 
 ```dotenv
 AUTH_ENABLED=false
-ZITADEL_ISSUER=https://your-zitadel.example.com
-ZITADEL_CLIENT_ID=
-ZITADEL_CLIENT_SECRET=
+OIDC_ISSUER=https://your-oidc-provider.example.com
+OIDC_CLIENT_ID=
+OIDC_CLIENT_SECRET=
 APP_BASE_URL=http://localhost:7865
 SESSION_SECRET=请替换为随机字符串
 ```
 
-需要启用 OIDC 登录时，将 `AUTH_ENABLED` 改为 `true`，并填写 `ZITADEL_CLIENT_ID`、`ZITADEL_CLIENT_SECRET`、`ZITADEL_ISSUER` 和 `APP_BASE_URL`。不启用认证时保持 `AUTH_ENABLED=false` 即可。
+不启用认证时保持 `AUTH_ENABLED=false` 即可。
 
 5. 构建并启动：
 
@@ -92,7 +101,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-打开 <http://localhost:7865>，然后在“管理预设”中填写 API Key、Base URL 和模型名称。查看日志、停止和更新服务：
+打开 <http://localhost:7865>，然后在“管理预设”中填写 API Key、Base URL 和模型名称。常用维护命令：
 
 ```powershell
 docker compose logs -f babeldoc
@@ -101,7 +110,7 @@ git pull --ff-only
 docker compose up -d --build --force-recreate
 ```
 
-### 方式二：本地 Python
+### 本地 Python
 
 1. 安装 Python 3.10、3.11、3.12 或 3.13，推荐 Python 3.12，并在安装程序中勾选 **Add Python to PATH**。当前不支持 Python 3.14。
 2. 在 PowerShell 中进入项目目录，创建虚拟环境并安装依赖：
@@ -119,7 +128,7 @@ python -m pip install -r requirements.txt
 start.bat
 ```
 
-也可以直接双击 `start.bat`，脚本会自动选择受支持的 Python 版本、创建虚拟环境、安装依赖、创建运行数据文件并启动服务。批处理文件使用 Windows CRLF 换行，建议通过 Git 克隆或下载完整发布包，不要用会自动转换换行符的编辑器保存。
+也可以直接双击 `start.bat`。脚本会自动选择受支持的 Python 版本、创建虚拟环境、安装依赖并启动服务。
 
 查看状态、日志、重启和停止：
 
@@ -139,18 +148,34 @@ python babeldoc_translator.py
 
 配置和翻译结果会保存在项目目录中的 `.babeldoc_config.json`、`.babeldoc_history.json` 和 `outputs/`。
 
-Windows 本地运行不使用 Linux 专用的 `start.sh`。通过 `start.bat` 后台启动时使用 `start.bat stop` 停止；直接执行 `python babeldoc_translator.py` 时，在对应 PowerShell 窗口按 `Ctrl+C` 停止。
+Windows 本地运行不使用 Linux 专用的 `start.sh`。通过 `start.bat` 后台启动时使用 `start.bat stop` 停止；直接执行 `python babeldoc_translator.py` 时，在 PowerShell 窗口按 `Ctrl+C` 停止。
 
-## 翻译进度与排障
+## 使用说明
 
-翻译大型 PDF 时，页面会持续显示当前阶段耗时、子进程最近输出时间，以及模型响应警告/降级重试次数。刷新页面不会终止后台翻译，重新打开页面后可继续查看当前任务。
+上传 PDF 后选择目标语言和翻译预设即可开始任务。大型文档的处理时间取决于页数、文本量、模型服务速度和 API 限流情况。刷新页面不会终止后台任务，重新打开页面后仍可查看任务状态。
 
-如果长时间停留在“段落翻译”：
+页面会显示当前阶段耗时、最近输出时间，以及模型响应警告和降级重试次数，方便判断任务是在持续处理还是需要调整模型设置。
 
-1. 查看“最近输出”和“最近警告”。只要最近输出时间仍在更新，任务通常仍在运行。
-2. 若反复出现 `Unterminated string`、`Invalid control character` 或“输出过长/过短”，说明模型返回格式不稳定。可将速度从“极速”降为“快速”或“标准”，或者切换其他 OpenAI 兼容模型。
-3. Docker 部署可运行 `docker compose logs -f babeldoc` 查看完整日志；Windows 本地部署可运行 `start.bat logs`。
-4. 确认任务确实无响应后，再从页面停止任务或重启服务。重启会中断尚未完成的翻译。
+## 配置与数据
+
+首次打开页面后，在“管理预设”中保存 API Key、Base URL 和模型名称。配置与翻译结果保存在项目目录：
+
+- `.babeldoc_config.json`：API 配置
+- `.babeldoc_history.json`：历史任务记录
+- `outputs/`：原文与译文 PDF
+
+`.babeldoc_config.json` 包含 API Key，Key 仅经过简单编码存储，**不是加密**。这些文件已被 [.gitignore](.gitignore) 排除，请勿提交到 Git、上传网盘或分享给他人。备份或迁移实例时，请一并保存上述文件和目录。
+
+认证由环境变量 `AUTH_ENABLED` 控制，默认关闭。启用时需配置任意兼容 OpenID Connect 的身份提供商，并填写 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`、`APP_BASE_URL` 和 `SESSION_SECRET`。`OIDC_ISSUER` 应指向身份提供商的 issuer 地址，应用会从其标准 `.well-known/openid-configuration` 端点发现认证配置。
+
+## 故障排查
+
+如果任务长时间停留在“段落翻译”：
+
+1. 查看“最近输出”和“最近警告”。只要最近输出时间仍在更新，任务通常仍在处理。
+2. 如果反复出现 `Unterminated string`、`Invalid control character` 或“输出过长/过短”，请降低翻译速度或更换 OpenAI 兼容模型。
+3. Docker 用户可运行 `docker compose logs -f babeldoc` 查看日志；Windows 用户可运行 `start.bat logs`。
+4. 确认任务无响应后，再从页面停止任务或重启服务。重启会中断未完成的翻译。
 
 代码更新后，Docker 部署运行：
 
@@ -163,22 +188,6 @@ Windows 本地部署运行：
 ```bat
 start.bat restart
 ```
-
-## 配置
-
-认证由环境变量 `AUTH_ENABLED` 控制，默认值为 `false`。没有 OIDC 服务时保持关闭即可；只有将其设为 `true`，并同时填写完整的 Zitadel 配置后，应用才会启用登录保护。
-
-首次打开页面后，在界面中填写 API Key / Base URL / 模型名称并保存，配置会写入项目根目录下的本地文件：
-
-- `.babeldoc_config.json`：API 配置（Key 经过简单编码存储，**不是加密**，仍属敏感信息）
-- `.babeldoc_history.json`：历史任务记录
-- `outputs/`：历史任务的原文与译文文件
-
-**这些文件包含你的真实 API Key，切勿提交到 Git 或分享给他人。** 项目已在 [.gitignore](.gitignore) 中排除它们，正常使用 `git status` 不会看到这些文件被跟踪。若要打包、复制项目给其他人（如迁移到新服务器、上传网盘、发给协作者），请先删除或替换这些文件里的 `api_key` 字段。
-
-Docker 部署时这些文件通过 volume 挂载持久化到宿主机同名文件/目录，不会打进镜像，重新构建镜像不会清空已保存的配置。
-
-宿主机与容器统一使用带点的文件名：删除容器不会删除这些文件，执行 `docker compose down` 也不会删除翻译历史和配置。备份或迁移时请一并保存 `.babeldoc_config.json`、`.babeldoc_history.json` 和 `outputs/`。
 
 ## 目录说明
 
