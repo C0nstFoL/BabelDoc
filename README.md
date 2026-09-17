@@ -7,7 +7,8 @@
 - PDF 论文翻译，输出双语对照版（dual）和纯译文版（mono）
 - 亮色 / 暗色 / 跟随系统三种主题，自动记忆偏好
 - 历史任务列表：原文/译文在线预览、下载、删除
-- 翻译进度、日志实时展示
+- 翻译进度、阶段耗时和子进程心跳实时展示
+- 汇总显示模型响应警告与降级重试，便于区分长任务和程序卡死
 
 ## 快速开始
 
@@ -23,7 +24,13 @@ docker compose up -d --build
 
 访问 http://localhost:7865
 
-代码更新后需要重新构建镜像并重建容器，否则容器会继续运行旧代码：
+本项目将主程序挂载到容器中。只修改 `babeldoc_translator.py` 时重启容器即可生效：
+
+```bash
+docker compose restart babeldoc
+```
+
+如果修改了 `Dockerfile` 或 `requirements.txt`，则需要重新构建镜像：
 
 ```bash
 docker compose build babeldoc
@@ -43,9 +50,9 @@ pip install -r requirements.txt
 或直接前台运行：
 
 ```bash
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+python babeldoc_translator.py
 ```
+
 ## Windows 部署
 
 ### 方式一：Docker Desktop（推荐）
@@ -112,7 +119,7 @@ python -m pip install -r requirements.txt
 start.bat
 ```
 
-也可以直接双击 `start.bat`，脚本会自动创建 Python 虚拟环境、安装依赖、创建运行数据文件并启动服务。
+也可以直接双击 `start.bat`，脚本会自动选择受支持的 Python 版本、创建虚拟环境、安装依赖、创建运行数据文件并启动服务。批处理文件使用 Windows CRLF 换行，建议通过 Git 克隆或下载完整发布包，不要用会自动转换换行符的编辑器保存。
 
 查看状态、日志、重启和停止：
 
@@ -132,7 +139,30 @@ python babeldoc_translator.py
 
 配置和翻译结果会保存在项目目录中的 `.babeldoc_config.json`、`.babeldoc_history.json` 和 `outputs/`。
 
-Windows 本地运行不使用 Linux 专用的 `start.sh`；需要停止服务时，在运行 Python 的 PowerShell 窗口按 `Ctrl+C` 即可。
+Windows 本地运行不使用 Linux 专用的 `start.sh`。通过 `start.bat` 后台启动时使用 `start.bat stop` 停止；直接执行 `python babeldoc_translator.py` 时，在对应 PowerShell 窗口按 `Ctrl+C` 停止。
+
+## 翻译进度与排障
+
+翻译大型 PDF 时，页面会持续显示当前阶段耗时、子进程最近输出时间，以及模型响应警告/降级重试次数。刷新页面不会终止后台翻译，重新打开页面后可继续查看当前任务。
+
+如果长时间停留在“段落翻译”：
+
+1. 查看“最近输出”和“最近警告”。只要最近输出时间仍在更新，任务通常仍在运行。
+2. 若反复出现 `Unterminated string`、`Invalid control character` 或“输出过长/过短”，说明模型返回格式不稳定。可将速度从“极速”降为“快速”或“标准”，或者切换其他 OpenAI 兼容模型。
+3. Docker 部署可运行 `docker compose logs -f babeldoc` 查看完整日志；Windows 本地部署可运行 `start.bat logs`。
+4. 确认任务确实无响应后，再从页面停止任务或重启服务。重启会中断尚未完成的翻译。
+
+代码更新后，Docker 部署运行：
+
+```bash
+docker compose restart babeldoc
+```
+
+Windows 本地部署运行：
+
+```bat
+start.bat restart
+```
 
 ## 配置
 
