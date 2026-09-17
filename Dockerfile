@@ -15,9 +15,11 @@ ENV PYTHONUNBUFFERED=1
 #   - libsm6, libxext6, libxrender-dev: 图形相关
 #   - fonts-wqy-zenhei / fonts-noto-cjk: 中文字体支持
 #   - poppler-utils: PDF 工具
+#   - tesseract-ocr(+eng/chi-sim): 扫描版 PDF OCR 预处理（配合 ocrmypdf）
+#   - ghostscript, qpdf: ocrmypdf 必需的系统依赖
 RUN sed -i \
-    -e 's|URIs: http://deb.debian.org/debian-security|URIs: http://mirrors.tuna.tsinghua.edu.cn/debian-security|g' \
-    -e 's|URIs: http://deb.debian.org/debian|URIs: http://mirrors.tuna.tsinghua.edu.cn/debian|g' \
+    -e 's|URIs: http://deb.debian.org/debian-security|URIs: http://mirrors.aliyun.com/debian-security|g' \
+    -e 's|URIs: http://deb.debian.org/debian|URIs: http://mirrors.aliyun.com/debian|g' \
     /etc/apt/sources.list.d/debian.sources \
     && apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
@@ -28,6 +30,11 @@ RUN sed -i \
     fonts-wqy-zenhei \
     fonts-noto-cjk \
     poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-chi-sim \
+    ghostscript \
+    qpdf \
     && rm -rf /var/lib/apt/lists/*
 
 # 使用清华 pip 镜像源加速
