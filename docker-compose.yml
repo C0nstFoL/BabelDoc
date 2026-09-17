@@ -13,6 +13,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # 构建时使用宿主机网络，避免 build 容器 DNS 间歇性解析失败
+      network: host
     container_name: babeldoc-translator
     # 使用 host 网络模式：与宿主机共享网络栈，避免容器内访问 auth.folink.site 时
     # 因公网 IP hairpin NAT 不通而导致 OAuth 登录超时（ConnectTimeout）
@@ -24,6 +26,11 @@ services:
       - ./babeldoc_history.json:/app/.babeldoc_history.json
       # 持久化历史任务目录（原文与译文都存放于此）
       - ./outputs:/app/outputs
+      # 复用宿主机的 BabelDOC 资产缓存（字体/模型），避免容器内重复下载超时
+      # 注意必须可写：babeldoc 运行时需要在缓存目录打开 sqlite 数据库
+      - ${HOME}/.cache/babeldoc:/root/.cache/babeldoc
+      # 直接挂载源码，改代码后 restart 即可生效，无需重建镜像
+      - ./babeldoc_translator.py:/app/babeldoc_translator.py
     environment:
       - TZ=Asia/Shanghai
       # Zitadel 登录认证配置（实际取值写在 .env 文件中，不要写入本文件）
