@@ -21,9 +21,9 @@ services:
     network_mode: host
     volumes:
       # 持久化 API 配置到本地文件（首次会自动创建，需先手动 touch 一个空文件）
-      - ./babeldoc_config.json:/app/.babeldoc_config.json
+      - ./.babeldoc_config.json:/app/.babeldoc_config.json
       # 持久化历史记录列表
-      - ./babeldoc_history.json:/app/.babeldoc_history.json
+      - ./.babeldoc_history.json:/app/.babeldoc_history.json
       # 持久化历史任务目录（原文与译文都存放于此）
       - ./outputs:/app/outputs
       # 复用宿主机的 BabelDOC 资产缓存（字体/模型），避免容器内重复下载超时
