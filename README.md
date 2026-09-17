@@ -136,6 +136,8 @@ Windows 本地运行不使用 Linux 专用的 `start.sh`；需要停止服务时
 
 Docker 部署时这些文件通过 volume 挂载持久化到宿主机同名文件/目录，不会打进镜像，重新构建镜像不会清空已保存的配置。
 
+宿主机与容器统一使用带点的文件名：删除容器不会删除这些文件，执行 `docker compose down` 也不会删除翻译历史和配置。备份或迁移时请一并保存 `.babeldoc_config.json`、`.babeldoc_history.json` 和 `outputs/`。
+
 ## 目录说明
 
 | 路径 | 说明 |
