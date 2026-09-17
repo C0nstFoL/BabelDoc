@@ -15,7 +15,7 @@
 
 ```bash
 # 首次运行前，创建持久化文件（宿主机需预先存在，否则 Docker 会误创建为目录）
-touch babeldoc_config.json babeldoc_history.json
+touch .babeldoc_config.json .babeldoc_history.json
 mkdir -p outputs
 
 docker compose up -d --build
@@ -61,7 +61,7 @@ Set-Location BabelDoc
 3. 创建 Docker 需要挂载的本地文件和目录：
 
 ```powershell
-New-Item -ItemType File -Force babeldoc_config.json, babeldoc_history.json
+New-Item -ItemType File -Force .babeldoc_config.json, .babeldoc_history.json
 New-Item -ItemType Directory -Force outputs
 ```
 
