@@ -101,7 +101,7 @@ docker compose up -d --build --force-recreate
 
 ```powershell
 py -3 -m venv .venv
-.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
@@ -118,7 +118,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 python babeldoc_translator.py
 ```
 
-4. 浏览器访问 <http://localhost:7865>。配置和翻译结果会保存在项目目录中的 `babeldoc_config.json`、`babeldoc_history.json` 和 `outputs/`。
+4. 浏览器访问 <http://localhost:7865>。配置和翻译结果会保存在项目目录中的 `.babeldoc_config.json`、`.babeldoc_history.json` 和 `outputs/`。
 
 Windows 本地运行不使用 Linux 专用的 `start.sh`；需要停止服务时，在运行 Python 的 PowerShell 窗口按 `Ctrl+C` 即可。
 
