@@ -113,13 +113,30 @@ def _format_file_size(size: int) -> str:
     return f"{size} B"
 
 
-def file_info_panel(file_value):
-    """生成上传区下方的文件信息面板，兼容 Gradio 返回的临时文件路径。"""
+def _pdf_preflight(pdf_path: Path) -> tuple[str, str]:
+    """快速读取 PDF 页数与前几页文字层，用于上传后的翻译前检查。"""
+    try:
+        try:
+            import pymupdf
+        except ImportError:
+            import fitz as pymupdf
+
+        with pymupdf.open(pdf_path) as doc:
+            page_count = len(doc)
+            sample_text = "".join(page.get_text().strip() for page in doc[:3])
+        text_status = "已检测到可提取文字" if len(sample_text) >= 80 else "文字层较少，可能需要 OCR"
+        return f"{page_count} 页", text_status
+    except Exception:
+        return "暂不可用", "暂未完成检查"
+
+
+def file_info_panel(file_value, lang_in="en", lang_out="zh", output_mode="both", speed="快速"):
+    """生成上传区下方的翻译前检查面板，兼容 Gradio 返回的临时文件路径。"""
     if not file_value:
         return """
         <div class="file-info-empty">
             <span class="file-info-empty-icon">🗂️</span>
-            <div><strong>等待选择文件</strong><p>支持单个 PDF 文档。上传后将在这里显示文件属性与翻译前检查状态。</p></div>
+            <div><strong>等待选择文件</strong><p>支持单个 PDF 文档。上传后将在这里检查页数、文字层及本次翻译设置。</p></div>
         </div>
         """
 
@@ -132,6 +149,15 @@ def file_info_panel(file_value):
         size = "暂不可用"
         status = "文件信息读取中，请稍候"
     extension = path.suffix.upper().lstrip(".") or "未知"
+    pages, text_status = _pdf_preflight(path)
+    language_names = {"en": "英语", "zh": "中文", "ja": "日语", "fr": "法语", "de": "德语", "ru": "俄语", "es": "西班牙语", "ko": "韩语"}
+    output_names = {"both": "双语对照 + 译文", "dual_only": "仅双语对照", "mono_only": "仅译文"}
+    speed_names = {"标准": "标准", "快速": "快速", "极速": "极速"}
+    translation_summary = " · ".join((
+        f"{language_names.get(lang_in, lang_in)} → {language_names.get(lang_out, lang_out)}",
+        output_names.get(output_mode, output_mode),
+        f"{speed_names.get(speed, speed)}速度",
+    ))
     return f"""
     <div class="file-info-ready">
         <div class="file-info-status"><span>✓</span>{status}</div>
@@ -139,7 +165,10 @@ def file_info_panel(file_value):
             <div><span>文件名称</span><strong title="{filename}">{filename}</strong></div>
             <div><span>文件大小</span><strong>{size}</strong></div>
             <div><span>文件格式</span><strong>{html.escape(extension)}</strong></div>
+            <div><span>文档页数</span><strong>{pages}</strong></div>
+            <div><span>文字层检查</span><strong>{text_status}</strong></div>
         </div>
+        <div class="translation-summary"><span>本次翻译</span><strong>{translation_summary}</strong></div>
     </div>
     """
 
@@ -1567,6 +1596,10 @@ CUSTOM_CSS = """
     .file-info-grid > div { min-width: 0; padding: 9px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r-sm); }
     .file-info-grid span { display: block; margin-bottom: 3px; color: var(--tx-3); font-size: 10.5px; }
     .file-info-grid strong { display: block; overflow: hidden; color: var(--tx); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .file-info-grid > div:nth-child(4), .file-info-grid > div:nth-child(5) { grid-column: span 1; }
+    .translation-summary { margin-top: 10px; padding: 9px 10px; border-radius: var(--r-sm); background: var(--brand-soft); border: 1px solid var(--brand-ring); }
+    .translation-summary span { display: block; margin-bottom: 3px; color: var(--tx-2); font-size: 10.5px; }
+    .translation-summary strong { display: block; color: var(--tx); font-size: 12px; font-weight: 600; }
     .llm-card { display: flex !important; flex-direction: column !important; }
     /* 当前生效配置：品牌色信息面板 */
     .llm-summary {
@@ -2103,11 +2136,18 @@ with gr.Blocks(
         outputs=[translate_btn],
     )
 
+    file_info_inputs = [pdf_input, lang_in, lang_out, output_mode, speed]
     pdf_input.change(
         fn=file_info_panel,
-        inputs=[pdf_input],
+        inputs=file_info_inputs,
         outputs=[file_info],
     )
+    for setting in (lang_in, lang_out, output_mode, speed):
+        setting.change(
+            fn=file_info_panel,
+            inputs=file_info_inputs,
+            outputs=[file_info],
+        )
 
     # ---- LLM 预设管理事件 ----
     def _thinking_switch_update(p):
