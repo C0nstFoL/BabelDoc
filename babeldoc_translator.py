@@ -113,8 +113,13 @@ def _format_file_size(size: int) -> str:
     return f"{size} B"
 
 
-def _pdf_preflight(pdf_path: Path) -> tuple[str, str]:
-    """快速读取 PDF 页数与前几页文字层，用于上传后的翻译前检查。"""
+def _format_token_count(tokens: int) -> str:
+    """将 Token 数量转换为紧凑且易读的格式。"""
+    return f"{tokens / 1000:.1f}K" if tokens >= 1000 else str(tokens)
+
+
+def _pdf_preflight(pdf_path: Path) -> tuple[int | None, str, int]:
+    """读取 PDF 页数与文字抽样，并返回用于估算 API 用量的字符数。"""
     try:
         try:
             import pymupdf
@@ -123,11 +128,32 @@ def _pdf_preflight(pdf_path: Path) -> tuple[str, str]:
 
         with pymupdf.open(pdf_path) as doc:
             page_count = len(doc)
-            sample_text = "".join(page.get_text().strip() for page in doc[:3])
+            sample_pages = min(3, page_count)
+            sample_text = "".join(
+                doc.load_page(index).get_text().strip()
+                for index in range(sample_pages)
+            )
         text_status = "已检测到可提取文字" if len(sample_text) >= 80 else "文字层较少，可能需要 OCR"
-        return f"{page_count} 页", text_status
+        average_chars = len(sample_text) / max(sample_pages, 1)
+        estimated_chars = max(800 * page_count, int(average_chars * page_count))
+        return page_count, text_status, estimated_chars
     except Exception:
-        return "暂不可用", "暂未完成检查"
+        return None, "暂未完成检查", 0
+
+
+def _translation_estimate(page_count: int | None, estimated_chars: int, speed: str, text_status: str) -> tuple[str, str]:
+    """按页数、文字抽样和速度生成时长及 Token 用量的保守估算。"""
+    if not page_count:
+        return "等待文件检查", "等待文件检查"
+
+    seconds_per_page = {"标准": 18, "快速": 10, "极速": 6}.get(speed, 10)
+    if "可能需要 OCR" in text_status:
+        seconds_per_page *= 2
+    estimated_seconds = 25 + page_count * seconds_per_page
+    low_minutes = max(1, round(estimated_seconds * 0.7 / 60))
+    high_minutes = max(low_minutes + 1, round(estimated_seconds * 1.35 / 60))
+    total_tokens = max(1200, int(estimated_chars / 4 * 1.9))
+    return f"约 {low_minutes}–{high_minutes} 分钟", f"约 {_format_token_count(total_tokens)} tokens"
 
 
 def file_info_panel(file_value, lang_in="en", lang_out="zh", output_mode="both", speed="快速"):
@@ -149,7 +175,9 @@ def file_info_panel(file_value, lang_in="en", lang_out="zh", output_mode="both",
         size = "暂不可用"
         status = "文件信息读取中，请稍候"
     extension = path.suffix.upper().lstrip(".") or "未知"
-    pages, text_status = _pdf_preflight(path)
+    page_count, text_status, estimated_chars = _pdf_preflight(path)
+    pages = f"{page_count} 页" if page_count is not None else "暂不可用"
+    time_estimate, token_estimate = _translation_estimate(page_count, estimated_chars, speed, text_status)
     language_names = {"en": "英语", "zh": "中文", "ja": "日语", "fr": "法语", "de": "德语", "ru": "俄语", "es": "西班牙语", "ko": "韩语"}
     output_names = {"both": "双语对照 + 译文", "dual_only": "仅双语对照", "mono_only": "仅译文"}
     speed_names = {"标准": "标准", "快速": "快速", "极速": "极速"}
@@ -169,6 +197,10 @@ def file_info_panel(file_value, lang_in="en", lang_out="zh", output_mode="both",
             <div><span>文字层检查</span><strong>{text_status}</strong></div>
         </div>
         <div class="translation-summary"><span>本次翻译</span><strong>{translation_summary}</strong></div>
+        <div class="estimate-grid">
+            <div><span>预计时长</span><strong>{time_estimate}</strong></div>
+            <div><span>预估成本（API 用量）</span><strong>{token_estimate}</strong><small>金额按当前模型服务商费率计算</small></div>
+        </div>
     </div>
     """
 
@@ -1592,14 +1624,18 @@ CUSTOM_CSS = """
         width: 17px; height: 17px; border-radius: 50%;
         background: rgba(22,163,74,.12); font-size: 11px;
     }
-    .file-info-grid { display: grid; grid-template-columns: minmax(0, 2fr) repeat(2, minmax(72px, 1fr)); gap: 8px; }
+    .file-info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .file-info-grid > div { min-width: 0; padding: 9px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r-sm); }
     .file-info-grid span { display: block; margin-bottom: 3px; color: var(--tx-3); font-size: 10.5px; }
-    .file-info-grid strong { display: block; overflow: hidden; color: var(--tx); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-    .file-info-grid > div:nth-child(4), .file-info-grid > div:nth-child(5) { grid-column: span 1; }
+    .file-info-grid strong { display: block; color: var(--tx); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; }
+    .file-info-grid > div:first-child { grid-column: 1 / -1; }
     .translation-summary { margin-top: 10px; padding: 9px 10px; border-radius: var(--r-sm); background: var(--brand-soft); border: 1px solid var(--brand-ring); }
     .translation-summary span { display: block; margin-bottom: 3px; color: var(--tx-2); font-size: 10.5px; }
     .translation-summary strong { display: block; color: var(--tx); font-size: 12px; font-weight: 600; }
+    .estimate-grid { display: grid; grid-template-columns: 1fr 1.35fr; gap: 8px; margin-top: 8px; }
+    .estimate-grid > div { padding: 9px 10px; border-radius: var(--r-sm); background: var(--panel-2); border: 1px solid var(--border); }
+    .estimate-grid span, .estimate-grid small { display: block; color: var(--tx-3); font-size: 10.5px; }
+    .estimate-grid strong { display: block; margin: 3px 0; color: var(--tx); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
     .llm-card { display: flex !important; flex-direction: column !important; }
     /* 当前生效配置：品牌色信息面板 */
     .llm-summary {
@@ -1802,8 +1838,7 @@ CUSTOM_CSS = """
         .step-num { width: 16px; height: 16px; font-size: 9.5px; }
         .step-sep { width: 10px; }
         .file-info-card { min-height: 132px; }
-        .file-info-grid { grid-template-columns: 1fr 1fr; }
-        .file-info-grid > div:first-child { grid-column: 1 / -1; }
+        .file-info-grid, .estimate-grid { grid-template-columns: 1fr; }
         .log-panel { font-size: 11px !important; min-height: 140px; max-height: 320px; padding: 8px !important; }
         .progress-bar { height: 10px; }
         .gradio-container button { font-size: 13px !important; }
