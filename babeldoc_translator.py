@@ -1974,9 +1974,11 @@ CUSTOM_CSS = """
     .history-table .history-row-selected {
         background-color: color-mix(in srgb, #fef08a 18%, transparent) !important;
     }
-    .history-table .cell-selected,
-    .history-table .cell-selected::before,
-    .history-table .cell-selected::after {
+    .history-table .body-cell.cell-selected,
+    .history-table .body-cell.cell-selected::before,
+    .history-table .body-cell.cell-selected::after,
+    .history-table [class*="cell-selected"] {
+        --ring-color: transparent !important;
         outline: none !important; box-shadow: none !important;
         border-color: transparent !important; background-image: none !important;
     }
