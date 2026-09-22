@@ -1973,13 +1973,6 @@ CUSTOM_CSS = """
     /* Gradio 6 使用带 data-row/data-col 的网格单元格，由前端同步整行选中类。 */
     .history-table .history-row-selected {
         background-color: color-mix(in srgb, #fef08a 18%, transparent) !important;
-        box-shadow: inset 0 2px #eab308, inset 0 -2px #eab308 !important;
-    }
-    .history-table .history-row-selected[data-col="0"] {
-        box-shadow: inset 2px 0 #eab308, inset 0 2px #eab308, inset 0 -2px #eab308 !important;
-    }
-    .history-table .history-row-selected[data-col="6"] {
-        box-shadow: inset -2px 0 #eab308, inset 0 2px #eab308, inset 0 -2px #eab308 !important;
     }
     .history-table .cell-selected,
     .history-table .cell-selected::before,
