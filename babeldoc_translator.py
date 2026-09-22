@@ -594,14 +594,14 @@ def select_history_row(table_data: list[list[str]], evt: gr.SelectData):
             None,
         )
     task_id = record.get("task_id")
-    original, results, detail = show_history_files(task_id)
+    original, results, detail, delete_btn_update, delete_state = show_history_files(task_id)
     return (
         gr.update(value=task_id),
         original,
         results,
         detail,
-        gr.update(value="🗑️ 删除任务", interactive=True),
-        None,
+        delete_btn_update,
+        delete_state,
     )
 
 
