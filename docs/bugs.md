@@ -88,3 +88,8 @@
 - 位置：babeldoc_translator.py:639
 - 描述：Gradio 6 的 `Button` 组件不接受 `label` 参数，删除按钮两段式确认状态更新触发 `Button.__init__() got an unexpected keyword argument 'label'`；按钮初始状态也未按“是否已选择记录”控制。
 - 修复：改用 `Button.value` 更新按钮文字；默认禁用删除按钮，表格或下拉框选中记录后启用，清空/删除后重新禁用。
+
+## BUG-017 已修复（ddcd1dc）
+- 位置：babeldoc_translator.py:597
+- 描述：历史记录表格选中后仍按 3 个值解包 `show_history_files()` 的返回值，而该函数在删除按钮状态调整后实际返回 5 个值，触发 `ValueError: too many values to unpack (expected 3)`，选中后不再加载历史记录。
+- 修复：按实际返回值完整解包原文、译文、详情、删除按钮状态和删除确认状态，并将其同步到表格选中的全部输出组件。
