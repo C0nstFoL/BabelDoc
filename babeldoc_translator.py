@@ -2033,6 +2033,32 @@ CUSTOM_CSS = """
             inset 0 2px 0 0 var(--history-row-ring),
             inset 0 -2px 0 0 var(--history-row-ring) !important;
     }
+    .history-delete-confirm {
+        flex: 0 1 auto !important;
+        max-width: 150px !important;
+    }
+    .history-delete-confirm :is(label, .wrap) {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    .history-delete-confirm input[type="checkbox"] {
+        flex: 0 0 auto !important;
+        width: 16px !important; height: 16px !important;
+        margin: 0 !important;
+        accent-color: var(--err);
+    }
+    .history-delete-confirm span {
+        margin: 0 !important;
+        color: var(--tx-2) !important;
+        font-size: 12.5px !important;
+        white-space: nowrap !important;
+    }
     .history-detail {
         display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
         padding: 10px 12px; margin: 2px 0 10px;
@@ -2550,7 +2576,12 @@ with gr.Blocks(
                     value=_history_detail_html(None),
                 )
                 with gr.Row():
-                    history_delete_confirm = gr.Checkbox("确认删除记录及输出文件", scale=3)
+                    history_delete_confirm = gr.Checkbox(
+                        label="确认删除",
+                        scale=0,
+                        min_width=0,
+                        elem_classes="history-delete-confirm",
+                    )
                     history_delete_btn = gr.Button("🗑️ 删除任务", variant="stop", scale=1)
                 with gr.Row():
                     history_original_file = gr.File(label="原始文档", scale=1)
