@@ -1970,7 +1970,14 @@ CUSTOM_CSS = """
     .history-table :is(td, th, [role="gridcell"]):focus {
         outline: none !important; box-shadow: none !important; border-color: inherit !important;
     }
-    /* Gradio Dataframe 将单元格选择边框绘制在 cell-selected 及其伪元素上。 */
+    /* 将 Gradio 的单元格选中状态扩展为整行黄色边框。 */
+    .history-table tbody tr:has(td.cell-selected) {
+        outline: 2px solid #eab308 !important;
+        outline-offset: -2px;
+    }
+    .history-table tbody tr:has(td.cell-selected) td {
+        background-color: color-mix(in srgb, #fef08a 18%, transparent) !important;
+    }
     .history-table .cell-selected,
     .history-table .cell-selected::before,
     .history-table .cell-selected::after {
