@@ -497,8 +497,44 @@ def _history_table(records: list[dict]) -> list[list[str]]:
     ]
 
 
+def _get_history_record(task_id: str | None) -> dict | None:
+    if not task_id:
+        return None
+    return next((r for r in _load_history() if r.get("task_id") == task_id), None)
+
+
+def _history_detail_html(record: dict | None) -> str:
+    """显示当前选中任务的概要，避免用户在下拉项中反复辨认信息。"""
+    if not record:
+        return (
+            '<div class="history-detail history-detail-empty">'
+            '从上方表格点击一条任务，查看文件可用性并执行下载或删除操作。'
+            '</div>'
+        )
+    original_ready = bool(record.get("original_file") and os.path.isfile(record["original_file"]))
+    result_count = len([f for f in (record.get("result_files") or []) if _is_downloadable_result_pdf(f)])
+    if not result_count and _is_downloadable_result_pdf(record.get("result_file")):
+        result_count = 1
+    fields = [
+        ("文件", record.get("filename", "—")),
+        ("状态", _status_mark(record.get("status", "—"))),
+        ("时间", record.get("time", "—")),
+        ("语言", record.get("lang", "—")),
+        ("模型", record.get("model", "—")),
+        ("设置", record.get("settings", "—")),
+        ("耗时", record.get("duration", "—")),
+        ("文件", f"原文{'可用' if original_ready else '缺失'} · 译文 {result_count} 个可用"),
+    ]
+    items = "".join(
+        f"<div><span>{html.escape(label)}</span><strong>{html.escape(str(value))}</strong></div>"
+        for label, value in fields
+    )
+    return f'<div class="history-detail">{items}</div>'
+
+
 def show_history_files(task_id: str):
-    """选中历史任务后，自动在下载区展示原文与全部译文文件（不触发浏览器下载）"""
+    """选中历史任务后，自动在下载区展示原文与全部译文文件（不触发浏览器下载）。"""
+    record = _get_history_record(task_id)
     try:
         original = download_history_file(task_id, "original")
     except gr.Error:
@@ -509,13 +545,30 @@ def show_history_files(task_id: str):
         results = None
     if isinstance(results, str):
         results = [results]
-    return original, results
+    return original, results, _history_detail_html(record), gr.update(value=False)
 
 
-def refresh_history():
-    """刷新历史记录表格与选择框"""
+def select_history_row(evt: gr.SelectData):
+    """表格行点击直接选中任务，避免再从重复的下拉列表中查找。"""
+    row_index = evt.index[0] if isinstance(evt.index, tuple) else evt.index
     records = _load_history()
-    return _history_table(records), gr.update(choices=_history_choices(records), value=None)
+    if not isinstance(row_index, int) or not 0 <= row_index < len(records):
+        return gr.update(), None, None, _history_detail_html(None), gr.update(value=False)
+    task_id = records[row_index].get("task_id")
+    original, results, detail, confirm_reset = show_history_files(task_id)
+    return gr.update(value=task_id), original, results, detail, confirm_reset
+
+
+def refresh_history(selected_task_id: str | None = None):
+    """刷新历史记录，并在任务仍存在时保留当前选择。"""
+    records = _load_history()
+    valid_ids = {r.get("task_id") for r in records}
+    selected_task_id = selected_task_id if selected_task_id in valid_ids else None
+    return (
+        _history_table(records),
+        gr.update(choices=_history_choices(records), value=selected_task_id),
+        _history_detail_html(_get_history_record(selected_task_id)),
+    )
 
 
 def download_history_file(task_id: str, kind: str):
@@ -543,13 +596,22 @@ def download_history_file(task_id: str, kind: str):
     raise gr.Error("未找到该任务的记录")
 
 
-def delete_history_selected(task_id: str):
+def delete_history_selected(task_id: str, confirmed: bool):
     """删除选中的历史记录，并刷新表格"""
     if not task_id:
         raise gr.Error("请先在「选择历史任务」下拉框中选择要删除的任务")
+    if not confirmed:
+        raise gr.Error("删除会移除该任务的历史记录及其输出文件，请先勾选删除确认")
     _delete_history_record(task_id)
     records = _load_history()
-    return _history_table(records), gr.update(choices=_history_choices(records), value=None), None, None
+    return (
+        _history_table(records),
+        gr.update(choices=_history_choices(records), value=None),
+        None,
+        None,
+        _history_detail_html(None),
+        gr.update(value=False),
+    )
 
 
 # ---- 停止机制 ---- #
@@ -1882,6 +1944,22 @@ CUSTOM_CSS = """
         border-bottom: 1px solid var(--log-border);
     }
 
+    /* ===== 历史任务 ===== */
+    .history-table { margin-bottom: 10px !important; }
+    .history-table thead th { white-space: nowrap !important; }
+    .history-detail {
+        display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
+        padding: 10px 12px; margin: 2px 0 10px;
+        background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r-md);
+    }
+    .history-detail > div { min-width: 0; }
+    .history-detail span { display: block; font-size: 11px; color: var(--tx-3); margin-bottom: 2px; }
+    .history-detail strong { display: block; color: var(--tx); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+    .history-detail-empty { display: block; color: var(--tx-3); font-size: 12px; }
+    @media (max-width: 720px) {
+        .history-detail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
     .workflow-col { gap: 4px !important; }
     .action-row { margin: 0 !important; }
 
@@ -2360,22 +2438,32 @@ with gr.Blocks(
                 gr.Markdown("#### 历史翻译任务")
                 history_table = gr.Dataframe(
                     headers=["文件名", "时间", "语言", "模型", "设置", "耗时", "状态"],
-                    datatype=["str", "str", "str", "str", "str"],
+                    datatype=["str", "str", "str", "str", "str", "str", "str"],
                     interactive=False,
                     wrap=True,
+                    row_count=8,
+                    max_height=460,
+                    show_search="filter",
+                    pinned_columns=1,
+                    column_widths=[240, 158, 110, 180, 185, 72, 90],
+                    elem_classes="history-table",
                 )
                 with gr.Row():
                     history_select = gr.Dropdown(
-                        label="选择历史任务",
+                        label="已选任务（也可从下拉列表搜索）",
                         choices=[],
                         value=None,
                         scale=3,
                     )
                     history_refresh_btn = gr.Button("🔄 刷新", scale=1)
+                history_detail = gr.HTML(
+                    value=_history_detail_html(None),
+                )
                 with gr.Row():
-                    history_download_original_btn = gr.Button("📥 下载原文", scale=1)
-                    history_download_result_btn = gr.Button("📥 下载译文", scale=1)
-                    history_delete_btn = gr.Button("🗑️ 删除", variant="stop", scale=1)
+                    history_download_original_btn = gr.Button("📥 载入原文", scale=1)
+                    history_download_result_btn = gr.Button("📥 载入译文", scale=1)
+                    history_delete_confirm = gr.Checkbox("确认删除记录及输出文件", scale=2)
+                    history_delete_btn = gr.Button("🗑️ 删除任务", variant="stop", scale=1)
                 with gr.Row():
                     history_original_file = gr.File(label="原始文档", scale=1)
                     history_result_file = gr.File(
@@ -2798,26 +2886,32 @@ with gr.Blocks(
     # ---- 历史记录事件 ----
     history_refresh_btn.click(
         fn=refresh_history,
-        inputs=[],
-        outputs=[history_table, history_select],
+        inputs=[history_select],
+        outputs=[history_table, history_select, history_detail],
     )
 
     # 翻译/恢复进度结束后，顺带刷新历史记录列表
     translate_event.then(
         fn=refresh_history,
-        inputs=[],
-        outputs=[history_table, history_select],
+        inputs=[history_select],
+        outputs=[history_table, history_select, history_detail],
     )
     resume_event.then(
         fn=refresh_history,
+        inputs=[history_select],
+        outputs=[history_table, history_select, history_detail],
+    )
+
+    history_table.select(
+        fn=select_history_row,
         inputs=[],
-        outputs=[history_table, history_select],
+        outputs=[history_select, history_original_file, history_result_file, history_detail, history_delete_confirm],
     )
 
     history_select.change(
         fn=show_history_files,
         inputs=[history_select],
-        outputs=[history_original_file, history_result_file],
+        outputs=[history_original_file, history_result_file, history_detail, history_delete_confirm],
     )
 
     history_download_original_btn.click(
@@ -2832,8 +2926,8 @@ with gr.Blocks(
     )
     history_delete_btn.click(
         fn=delete_history_selected,
-        inputs=[history_select],
-        outputs=[history_table, history_select, history_original_file, history_result_file],
+        inputs=[history_select, history_delete_confirm],
+        outputs=[history_table, history_select, history_original_file, history_result_file, history_detail, history_delete_confirm],
     )
 
     # 启动时加载配置：恢复预设列表与当前生效预设
@@ -2872,8 +2966,8 @@ with gr.Blocks(
 
     demo.load(
         fn=refresh_history,
-        inputs=[],
-        outputs=[history_table, history_select],
+        inputs=[history_select],
+        outputs=[history_table, history_select, history_detail],
     )
 
     # 主题初始化：读取本地存储的偏好（默认跟随系统）
