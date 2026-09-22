@@ -1964,7 +1964,10 @@ CUSTOM_CSS = """
     }
 
     /* ===== 历史任务 ===== */
-    .history-table { margin-bottom: 10px !important; }
+    .history-table {
+        margin-bottom: 10px !important;
+        --history-row-ring: var(--color-accent, #f97316);
+    }
     .history-table thead th { white-space: nowrap !important; }
     .history-table tbody td { cursor: pointer !important; }
     /* Gradio table-wrap 默认有 transition: all，点击状态变化时会引起缩放动画。 */
@@ -2003,6 +2006,32 @@ CUSTOM_CSS = """
         --sel-right: inset 0 0 0 0 transparent !important;
         outline: none !important; box-shadow: none !important;
         border-color: transparent !important; background-image: none !important;
+    }
+    /* 用首尾单元格拼出完整的行选择框，避免中间列出现竖线。 */
+    .history-table .history-row-selected {
+        background-color: color-mix(in srgb, #fef08a 18%, transparent) !important;
+        box-shadow:
+            inset 0 2px 0 0 var(--history-row-ring),
+            inset 0 -2px 0 0 var(--history-row-ring) !important;
+    }
+    .history-table .history-row-first {
+        box-shadow:
+            inset 2px 0 0 0 var(--history-row-ring),
+            inset 0 2px 0 0 var(--history-row-ring),
+            inset 0 -2px 0 0 var(--history-row-ring) !important;
+    }
+    .history-table .history-row-last {
+        box-shadow:
+            inset -2px 0 0 0 var(--history-row-ring),
+            inset 0 2px 0 0 var(--history-row-ring),
+            inset 0 -2px 0 0 var(--history-row-ring) !important;
+    }
+    .history-table .history-row-first.history-row-last {
+        box-shadow:
+            inset 2px 0 0 0 var(--history-row-ring),
+            inset -2px 0 0 0 var(--history-row-ring),
+            inset 0 2px 0 0 var(--history-row-ring),
+            inset 0 -2px 0 0 var(--history-row-ring) !important;
     }
     .history-detail {
         display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
@@ -3055,17 +3084,22 @@ with gr.Blocks(
                     tableWrap?.style.setProperty('scale', 'none', 'important');
                     const selectedCell = table?.querySelector('.cell-selected[data-row]');
                     const selectedRow = selectedCell?.dataset.row;
-                    selectedCell?.style.setProperty('--ring-color', 'transparent', 'important');
-                    selectedCell?.style.setProperty('--sel-top', 'inset 0 0 0 0 transparent', 'important');
-                    selectedCell?.style.setProperty('--sel-bottom', 'inset 0 0 0 0 transparent', 'important');
-                    selectedCell?.style.setProperty('--sel-left', 'inset 0 0 0 0 transparent', 'important');
-                    selectedCell?.style.setProperty('--sel-right', 'inset 0 0 0 0 transparent', 'important');
-                    selectedCell?.style.setProperty('box-shadow', 'none', 'important');
+                    const rowCells = [...(table?.querySelectorAll('[data-row]') ?? [])]
+                        .filter((item) => (
+                            item.dataset.row === selectedRow
+                            && Number.isFinite(Number(item.dataset.col))
+                        ))
+                        .sort((a, b) => Number(a.dataset.col) - Number(b.dataset.col));
+                    const firstCell = rowCells[0];
+                    const lastCell = rowCells[rowCells.length - 1];
                     table?.querySelectorAll('[data-row]').forEach((rowCell) => {
+                        const selected = selectedRow !== undefined && rowCell.dataset.row === selectedRow;
                         rowCell.classList.toggle(
                             'history-row-selected',
-                            selectedRow !== undefined && rowCell.dataset.row === selectedRow,
+                            selected,
                         );
+                        rowCell.classList.toggle('history-row-first', selected && rowCell === firstCell);
+                        rowCell.classList.toggle('history-row-last', selected && rowCell === lastCell);
                     });
                 });
             });
