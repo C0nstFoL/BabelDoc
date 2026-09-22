@@ -1967,6 +1967,16 @@ CUSTOM_CSS = """
     .history-table { margin-bottom: 10px !important; }
     .history-table thead th { white-space: nowrap !important; }
     .history-table tbody td { cursor: pointer !important; }
+    /* Gradio table-wrap 默认有 transition: all，点击状态变化时会引起缩放动画。 */
+    .history-table .table-wrap {
+        transition: none !important; animation: none !important;
+        transform: none !important; scale: none !important;
+    }
+    .history-table .table-container,
+    .history-table .virtual-table-viewport {
+        transition: none !important; animation: none !important;
+    }
+    .history-table :is(button, [role="button"]):active { transform: none !important; }
     .history-table :is(td, th, [role="gridcell"]):focus {
         outline: none !important; box-shadow: none !important; border-color: inherit !important;
     }
@@ -1974,11 +1984,23 @@ CUSTOM_CSS = """
     .history-table .history-row-selected {
         background-color: color-mix(in srgb, #fef08a 18%, transparent) !important;
     }
+    /* Gradio 的选中 ring 使用 --ring-color 和 --sel-* 组合绘制。 */
+    .history-table .body-cell,
+    .history-table .header-cell {
+        --ring-color: transparent !important;
+    }
     .history-table .body-cell.cell-selected,
     .history-table .body-cell.cell-selected::before,
     .history-table .body-cell.cell-selected::after,
+    .history-table .header-cell.focus,
+    .history-table .header-cell.focus::before,
+    .history-table .header-cell.focus::after,
     .history-table [class*="cell-selected"] {
         --ring-color: transparent !important;
+        --sel-top: inset 0 0 0 0 transparent !important;
+        --sel-bottom: inset 0 0 0 0 transparent !important;
+        --sel-left: inset 0 0 0 0 transparent !important;
+        --sel-right: inset 0 0 0 0 transparent !important;
         outline: none !important; box-shadow: none !important;
         border-color: transparent !important; background-image: none !important;
     }
@@ -3026,8 +3048,19 @@ with gr.Blocks(
                 if (!cell) return;
                 requestAnimationFrame(() => {
                     const table = cell.closest('.history-table');
+                    const tableWrap = table?.querySelector('.table-wrap');
+                    tableWrap?.style.setProperty('transition', 'none', 'important');
+                    tableWrap?.style.setProperty('animation', 'none', 'important');
+                    tableWrap?.style.setProperty('transform', 'none', 'important');
+                    tableWrap?.style.setProperty('scale', 'none', 'important');
                     const selectedCell = table?.querySelector('.cell-selected[data-row]');
                     const selectedRow = selectedCell?.dataset.row;
+                    selectedCell?.style.setProperty('--ring-color', 'transparent', 'important');
+                    selectedCell?.style.setProperty('--sel-top', 'inset 0 0 0 0 transparent', 'important');
+                    selectedCell?.style.setProperty('--sel-bottom', 'inset 0 0 0 0 transparent', 'important');
+                    selectedCell?.style.setProperty('--sel-left', 'inset 0 0 0 0 transparent', 'important');
+                    selectedCell?.style.setProperty('--sel-right', 'inset 0 0 0 0 transparent', 'important');
+                    selectedCell?.style.setProperty('box-shadow', 'none', 'important');
                     table?.querySelectorAll('[data-row]').forEach((rowCell) => {
                         rowCell.classList.toggle(
                             'history-row-selected',
