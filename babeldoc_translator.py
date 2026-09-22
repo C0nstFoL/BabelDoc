@@ -1563,14 +1563,22 @@ def resume_progress():
             running = _TASK["running"]
             finished = _TASK["finished"]
             extra_html = _TASK["extra_html"]
-            result_files = _TASK.get("result_files") or (
+            stored_result_files = _TASK.get("result_files") or (
                 [_TASK["result_file"]] if _TASK.get("result_file") else None
             )
+            result_files = [
+                path for path in (stored_result_files or [])
+                if _is_downloadable_result_pdf(path)
+            ]
+            # 「清空」会删除本次任务目录；绝不把已失效路径交给 gr.File 后处理。
+            if stored_result_files and len(result_files) != len(stored_result_files):
+                _TASK["result_files"] = result_files or None
+                _TASK["result_file"] = result_files[0] if result_files else None
             output_dir = _TASK["output_dir"]
             cur_len = len(_TASK["status_lines"])
 
         if finished:
-            yield result_files, _task_snapshot_html(extra_html), output_dir
+            yield result_files or None, _task_snapshot_html(extra_html), output_dir
             return
 
         now = time.monotonic()
@@ -2776,6 +2784,15 @@ with gr.Blocks(
 
     def clear_all(temp_dir):
         cleanup_temp(temp_dir)
+        with _task_lock:
+            active_output_dir = _TASK.get("output_dir")
+            if temp_dir and active_output_dir and os.path.abspath(temp_dir) == os.path.abspath(active_output_dir):
+                # 删除当前结果目录后同时丢弃内存中的文件引用，恢复进度不会返回死路径。
+                _TASK["result_file"] = None
+                _TASK["result_files"] = None
+                _TASK["output_dir"] = None
+                _TASK["extra_html"] = ""
+                _TASK["status_lines"] = []
         return None, None, None, ""
 
     clear_btn.click(
