@@ -68,3 +68,8 @@
 - 位置：babeldoc_translator.py:1970
 - 描述：Gradio Dataframe 的 `table-wrap` 使用 `transition: all`，点击表格时状态变化触发缩小动画；同时 Svelte 作用域样式继续绘制默认橙色选择 ring。
 - 修复：禁用历史表格容器和选中单元格的过渡、缩放动画，并将 `--ring-color` 与 `--sel-*` 全部覆盖为透明。
+
+## BUG-013 已修复
+- 位置：babeldoc_translator.py:1973
+- 描述：Gradio Dataframe 的橙色选择框仍只覆盖被点击的单个单元格，无法表示当前选中的整条历史记录。
+- 修复：继续同步同行所有单元格的选中状态，并给首尾单元格添加边界标记；用内阴影拼出贯穿整行的橙色选择框。
