@@ -545,7 +545,7 @@ def show_history_files(task_id: str):
         results = None
     if isinstance(results, str):
         results = [results]
-    return original, results, _history_detail_html(record), gr.update(value=False)
+    return original, results, _history_detail_html(record)
 
 
 def select_history_row(table_data: list[list[str]], evt: gr.SelectData):
@@ -559,7 +559,7 @@ def select_history_row(table_data: list[list[str]], evt: gr.SelectData):
         row_value = table_data[row_index] if isinstance(row_index, int) and 0 <= row_index < len(table_data) else None
     records = _load_history()
     if not row_value:
-        return gr.update(), None, None, _history_detail_html(None), gr.update(value=False)
+        return gr.update(), None, None, _history_detail_html(None)
     filename, record_time = str(row_value[0]), str(row_value[1])
     model = str(row_value[3]) if len(row_value) > 3 else ""
     record = next(
@@ -572,10 +572,10 @@ def select_history_row(table_data: list[list[str]], evt: gr.SelectData):
         None,
     )
     if not record:
-        return gr.update(), None, None, _history_detail_html(None), gr.update(value=False)
+        return gr.update(), None, None, _history_detail_html(None)
     task_id = record.get("task_id")
-    original, results, detail, confirm_reset = show_history_files(task_id)
-    return gr.update(value=task_id), original, results, detail, confirm_reset
+    original, results, detail = show_history_files(task_id)
+    return gr.update(value=task_id), original, results, detail
 
 
 def refresh_history(selected_task_id: str | None = None):
@@ -615,8 +615,8 @@ def download_history_file(task_id: str, kind: str):
     raise gr.Error("未找到该任务的记录")
 
 
-def delete_history_selected(task_id: str, confirmed: bool):
-    """删除选中的历史记录，并刷新表格；未选中时不触发全局错误。"""
+def delete_history_selected(task_id: str):
+    """删除选中的历史记录，并刷新表格；未选中时不改变界面。"""
     if not task_id:
         return (
             gr.update(),
@@ -624,10 +624,7 @@ def delete_history_selected(task_id: str, confirmed: bool):
             gr.update(),
             gr.update(),
             gr.update(),
-            gr.update(interactive=False),
         )
-    if not confirmed:
-        raise gr.Error("删除会移除该任务的历史记录及其输出文件，请先勾选删除确认")
     _delete_history_record(task_id)
     records = _load_history()
     return (
@@ -636,8 +633,23 @@ def delete_history_selected(task_id: str, confirmed: bool):
         None,
         None,
         _history_detail_html(None),
-        gr.update(value=False),
     )
+
+
+def click_history_delete(task_id: str | None, armed_task_id: str | None):
+    """删除按钮两段式确认：第一次进入待确认状态，第二次执行删除。"""
+    reset_button = gr.update(label="🗑️ 删除任务", interactive=True)
+    keep_ui = (gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
+    if not task_id:
+        return reset_button, None, *keep_ui
+    if armed_task_id != task_id:
+        return (
+            gr.update(label="⚠️ 再次点击确认删除", interactive=True),
+            task_id,
+            *keep_ui,
+        )
+    table, select, original, results, detail = delete_history_selected(task_id)
+    return reset_button, None, table, select, original, results, detail
 
 
 # ---- 停止机制 ---- #
@@ -2040,32 +2052,6 @@ CUSTOM_CSS = """
             inset 0 2px 0 0 var(--history-row-ring),
             inset 0 -2px 0 0 var(--history-row-ring) !important;
     }
-    .history-delete-confirm {
-        flex: 0 1 auto !important;
-        max-width: 150px !important;
-    }
-    .history-delete-confirm :is(label, .wrap) {
-        display: inline-flex !important;
-        align-items: center !important;
-        gap: 8px !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-    }
-    .history-delete-confirm input[type="checkbox"] {
-        flex: 0 0 auto !important;
-        width: 16px !important; height: 16px !important;
-        margin: 0 !important;
-        accent-color: var(--err);
-    }
-    .history-delete-confirm span {
-        margin: 0 !important;
-        color: var(--tx-2) !important;
-        font-size: 12.5px !important;
-        white-space: nowrap !important;
-    }
     .history-detail {
         display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
         padding: 10px 12px; margin: 2px 0 10px;
@@ -2582,18 +2568,12 @@ with gr.Blocks(
                 history_detail = gr.HTML(
                     value=_history_detail_html(None),
                 )
+                history_delete_state = gr.State(None)
                 with gr.Row():
-                    history_delete_confirm = gr.Checkbox(
-                        label="确认删除",
-                        scale=0,
-                        min_width=0,
-                        elem_classes="history-delete-confirm",
-                    )
                     history_delete_btn = gr.Button(
                         "🗑️ 删除任务",
                         variant="stop",
                         scale=1,
-                        interactive=False,
                     )
                 with gr.Row():
                     history_original_file = gr.File(label="原始文档", scale=1)
@@ -3036,7 +3016,7 @@ with gr.Blocks(
     history_table.select(
         fn=select_history_row,
         inputs=[history_table],
-        outputs=[history_select, history_original_file, history_result_file, history_detail, history_delete_confirm],
+        outputs=[history_select, history_original_file, history_result_file, history_detail],
         queue=False,
         show_progress="hidden",
     )
@@ -3044,23 +3024,21 @@ with gr.Blocks(
     history_select.change(
         fn=show_history_files,
         inputs=[history_select],
-        outputs=[history_original_file, history_result_file, history_detail, history_delete_confirm],
+        outputs=[history_original_file, history_result_file, history_detail],
     )
 
     history_delete_btn.click(
-        fn=delete_history_selected,
-        inputs=[history_select, history_delete_confirm],
-        outputs=[history_table, history_select, history_original_file, history_result_file, history_detail, history_delete_confirm],
-    )
-
-    # 只有“已选记录 + 已确认删除”两个条件都满足时才允许触发删除，
-    # 避免未选择记录时后端抛出 Gradio Error 并污染整页状态。
-    history_delete_confirm.change(
-        fn=lambda task_id, confirmed: gr.update(interactive=bool(task_id and confirmed)),
-        inputs=[history_select, history_delete_confirm],
-        outputs=[history_delete_btn],
-        queue=False,
-        show_progress="hidden",
+        fn=click_history_delete,
+        inputs=[history_select, history_delete_state],
+        outputs=[
+            history_delete_btn,
+            history_delete_state,
+            history_table,
+            history_select,
+            history_original_file,
+            history_result_file,
+            history_detail,
+        ],
     )
 
     # 启动时加载配置：恢复预设列表与当前生效预设
@@ -3204,7 +3182,7 @@ with gr.Blocks(
         3. **开始翻译**：设置源/目标语言、输出模式和翻译速度后开始任务；页面会显示阶段进度和日志。
         4. **中断恢复**：刷新页面不会终止后台任务；重新打开后可点击「🔄 恢复进度」继续查看状态。
         5. **获取结果**：翻译完成后在当前页下载，或在「🗂️ 历史记录」选择任务后载入/下载原文和译文。
-        6. **管理历史**：历史页支持筛选、刷新和删除；删除前需勾选确认，操作会同时移除记录和输出文件。
+        6. **管理历史**：历史页支持筛选、刷新和删除；删除按钮需点击两次确认，操作会同时移除记录和输出文件。
         """
     )
 
