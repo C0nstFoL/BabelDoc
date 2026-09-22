@@ -2783,20 +2783,14 @@ with gr.Blocks(
     )
 
     def clear_all(temp_dir):
-        cleanup_temp(temp_dir)
         with _task_lock:
-            active_output_dir = _TASK.get("output_dir")
-            if temp_dir and active_output_dir and os.path.abspath(temp_dir) == os.path.abspath(active_output_dir):
-                # 删除当前结果目录后同时丢弃内存中的文件引用，恢复进度不会返回死路径。
-                _TASK["result_file"] = None
-                _TASK["result_files"] = None
-                _TASK["output_dir"] = None
-                _TASK["extra_html"] = ""
-                _TASK["status_lines"] = []
-        return None, None, None, ""
+            # 「清空」仅作用于日志面板，结果目录与文件引用必须保留，以便恢复进度和下载。
+            _TASK["status_lines"] = []
+            _TASK["extra_html"] = ""
+        return gr.update(), gr.update(), temp_dir, "", gr.update()
 
     clear_btn.click(
-        fn=lambda temp_dir: (*clear_all(temp_dir), file_info_panel(None)),
+        fn=clear_all,
         inputs=[temp_output_dir],
         outputs=[pdf_input, result_download, temp_output_dir, log_output, file_info],
     )
