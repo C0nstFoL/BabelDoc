@@ -26,3 +26,5 @@ babeldoc_history.json
 
 # 环境变量（含 OIDC Client Secret 等敏感信息，不应提交）
 .env
+
+AGENTS.md
