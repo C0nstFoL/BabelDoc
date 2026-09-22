@@ -568,6 +568,10 @@ _TASK: dict = {
     "last_activity": 0.0,      # 最近一次收到 BabelDOC 输出的时间
     "warning_count": 0,        # BabelDOC 警告/降级重试次数
     "last_warning": "",        # 最近一条警告，供长任务诊断
+    "progress_percent": 0.0,   # BabelDOC 原生 overall_progress；不可用时退回阶段进度
+    "progress_is_native": False,
+    "stage_current": None,     # 当前原生阶段已处理的项目数
+    "stage_total": None,       # 当前原生阶段项目总数
 }
 _task_lock = threading.Lock()
 
@@ -594,6 +598,7 @@ def _reset_stop():
 import sys as _sys
 
 STAGE_WEIGHTS: list[tuple[str, float, str]] = [
+    ("Parse PDF and Create Intermediate Representation", 14.12, "创建文档中间表示"),
     ("DetectScannedFile", 2.45, "扫描检测"),
     ("Parse Page Layout", 14.03, "页面布局解析"),
     ("Parse Table", 1.0, "表格解析"),
@@ -604,9 +609,59 @@ STAGE_WEIGHTS: list[tuple[str, float, str]] = [
     ("Typesetting", 4.71, "排版"),
     ("Add Fonts", 0.61, "字体嵌入"),
     ("Generate drawing instructions", 1.96, "生成绘图指令"),
+    ("Subset font", 0.92, "字体子集化"),
+    ("Save PDF", 6.34, "保存 PDF"),
 ]
 _TOTAL_WEIGHT = sum(w for _, w, _ in STAGE_WEIGHTS)
 _STAGE_INDEX: dict[str, int] = {name: i for i, (name, _, _) in enumerate(STAGE_WEIGHTS)}
+_ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-_][0-?]*[ -/]*[@-~]|\[[0-?]*[ -/]*[@-~])")
+
+
+def _canonical_stage(stage: str | None) -> str | None:
+    """将 BabelDOC 进度事件中的阶段名称映射为界面使用的标准名称。"""
+    if not stage:
+        return None
+    for name, _, _ in STAGE_WEIGHTS:
+        if stage == name or stage.startswith(name + " "):
+            return name
+    return None
+
+
+def _record_native_progress(raw: str) -> bool:
+    """提取 --debug 输出的 BabelDOC 进度事件，优先使用其精确 overall_progress。"""
+    clean = _ANSI_ESCAPE_RE.sub("", raw)
+    overall_match = re.search(r"['\"]overall_progress['\"]\s*:\s*([0-9]+(?:\.[0-9]+)?)", clean)
+    if not overall_match:
+        return False
+
+    progress = min(100.0, max(0.0, float(overall_match.group(1))))
+    event_match = re.search(r"['\"]type['\"]\s*:\s*['\"]([^'\"]+)", clean)
+    stage_match = re.search(r"['\"]stage['\"]\s*:\s*['\"]([^'\"]+)", clean)
+    current_match = re.search(r"['\"]stage_current['\"]\s*:\s*(\d+)", clean)
+    total_match = re.search(r"['\"]stage_total['\"]\s*:\s*(\d+)", clean)
+    stage = _canonical_stage(stage_match.group(1) if stage_match else None)
+    event_type = event_match.group(1) if event_match else "progress_update"
+
+    with _task_lock:
+        _TASK["progress_is_native"] = True
+        # 同一文档分片的旧事件可能迟到，进度绝不允许倒退。
+        _TASK["progress_percent"] = max(_TASK["progress_percent"], progress)
+        if stage:
+            _TASK["current_stage"] = stage
+            if current_match:
+                _TASK["stage_current"] = int(current_match.group(1))
+            if total_match:
+                _TASK["stage_total"] = int(total_match.group(1))
+            if event_type == "progress_end" and stage not in _TASK["completed_stages"]:
+                _TASK["completed_stages"].append(stage)
+    return True
+
+
+def _fallback_progress(completed_stages: list[str], current_stage: str | None) -> float:
+    """原生进度事件不可用时的保守阶段估算，避免将未完成阶段显示为已完成。"""
+    done = sum(weight for name, weight, _ in STAGE_WEIGHTS if name in completed_stages)
+    current_weight = next((weight for name, weight, _ in STAGE_WEIGHTS if name == current_stage), 0)
+    return min(99.0, (done + current_weight * 0.02) / _TOTAL_WEIGHT * 100)
 
 
 def _parse_log(raw: str) -> tuple[str, str, str] | None:
@@ -626,6 +681,7 @@ def _parse_log(raw: str) -> tuple[str, str, str] | None:
 def _detect_stage_from_msg(msg: str) -> str | None:
     """根据日志消息检测当前阶段名称"""
     patterns = [
+        ("Parse PDF and Create Intermediate Representation", r"Parse PDF and Create Intermediate Representation|创建.*中间表示|intermediate representation"),
         ("DetectScannedFile", r"DetectScannedFile|扫描件检测"),
         ("Parse Page Layout", r"Parse Page Layout|页面布局|Clustered into|drawing boxes|Annotated images"),
         ("Parse Table", r"Parse Table|表格解析"),
@@ -636,6 +692,8 @@ def _detect_stage_from_msg(msg: str) -> str | None:
         ("Typesetting", r"Typesetting|排版"),
         ("Add Fonts", r"Add Fonts|Font (mapper|subsetting)|字体|fontmap"),
         ("Generate drawing instructions", r"Generate drawing|绘图指令|PDF save|PDF.*subsetting"),
+        ("Subset font", r"Subset font|字体子集"),
+        ("Save PDF", r"Save PDF|保存 PDF"),
     ]
     for stage_name, pattern in patterns:
         if re.search(pattern, msg, re.IGNORECASE):
@@ -646,6 +704,7 @@ def _detect_stage_from_msg(msg: str) -> str | None:
 def _detect_stage_from_raw(raw: str) -> str | None:
     """从原始（未解析）日志行检测阶段 — 利用模块路径中的阶段信息"""
     patterns = [
+        ("Parse PDF and Create Intermediate Representation", r"create_intermediate|pdf.*intermediate"),
         ("DetectScannedFile", r"detect_scanned_file"),
         ("Parse Page Layout", r"layout_parser"),
         ("Parse Table", r"table_parser"),
@@ -656,6 +715,8 @@ def _detect_stage_from_raw(raw: str) -> str | None:
         ("Typesetting", r"typesetting"),
         ("Add Fonts", r"fontmap"),
         ("Generate drawing instructions", r"pdf_creater|backend"),
+        ("Subset font", r"subset_font"),
+        ("Save PDF", r"save_pdf"),
     ]
     for stage_name, pattern in patterns:
         if re.search(pattern, raw, re.IGNORECASE):
@@ -669,27 +730,29 @@ def _build_progress_html(
     current_stage: str | None,
     start_time: float,
     active_serial: int = 0,
+    progress_percent: float = 0.0,
+    progress_is_native: bool = False,
+    stage_current: int | None = None,
+    stage_total: int | None = None,
 ) -> str:
-    """构建进度条 HTML，含 CSS spinner、服务端计时器、alive 心跳。"""
+    """构建完整宽度的进度条；原生 overall_progress 可用时直接显示精确值。"""
     if not current_stage and not completed_stages:
         return ""
 
-    bars: list[str] = []
+    stage_badges: list[str] = []
     for name, weight, label in STAGE_WEIGHTS:
-        pct = weight / _TOTAL_WEIGHT * 100
         if name in completed_stages:
-            cls = "pg-done"
+            cls = "done"
         elif name == current_stage:
-            cls = "pg-current"
+            cls = "current"
         else:
-            cls = "pg-pending"
-        bars.append(
-            f'<div class="{cls}" style="flex:{pct:.2f}"'
-            f' title="{label}"></div>'
-        )
+            cls = "pending"
+        stage_badges.append(f'<span class="progress-stage {cls}">{label}</span>')
 
-    done_weight = sum(w for name, w, _ in STAGE_WEIGHTS if name in completed_stages)
-    progress = done_weight / _TOTAL_WEIGHT * 100
+    if len(set(completed_stages)) == len(STAGE_WEIGHTS):
+        progress = 100.0
+    else:
+        progress = min(100.0, max(0.0, progress_percent if progress_is_native else _fallback_progress(completed_stages, current_stage)))
 
     current_label = ""
     for name, _, label in STAGE_WEIGHTS:
@@ -698,31 +761,33 @@ def _build_progress_html(
             break
 
     # 活跃脉冲点：有 current_stage 时显示
-    active_dot = (
-        '<span class="alive-dot"></span> '
-        if current_stage
-        else ""
-    )
+    active_dot = '<span class="alive-dot"></span> ' if current_stage else ""
 
     # Gradio 通过 innerHTML 更新 gr.HTML，不会执行其中的 script 标签。
     # 计时值由 resume_progress 的服务端心跳每秒重新渲染。
     elapsed = max(0, int(time.time() - start_time))
     minutes, seconds = divmod(elapsed, 60)
     elapsed_text = f"{minutes}m{seconds}s" if minutes else f"{seconds}s"
-    timer_html = f'<span class="elapsed">(本阶段 {elapsed_text})</span>'
+    timer_html = f'<span class="elapsed">本阶段 {elapsed_text}</span>'
+    item_progress = (
+        f' · {stage_current}/{stage_total} 项'
+        if stage_current is not None and stage_total is not None and stage_total > 0
+        else ""
+    )
+    source_text = "实际任务进度" if progress_is_native else "阶段进度（等待原生进度事件）"
 
     return (
         '<div class="progress-area">'
+        '<div class="progress-head">'
         f'<span class="progress-text">'
         f'{active_dot}'
         f'<span class="spinner"></span> '
-        f'<b style="color:#4FC3F7">{current_label}</b> '
+        f'<b>{current_label or "正在初始化"}</b>{item_progress} '
         f'{timer_html}'
-        f'<span style="float:right;color:#4CAF50;font-weight:bold">{progress:.0f}%</span>'
-        f"</span>"
-        '<div class="progress-bar">'
-        + "".join(bars)
-        + "</div>"
+        f'</span><span class="progress-value">{progress:.1f}%</span></div>'
+        f'<div class="progress-track"><div class="progress-fill" style="width:{progress:.3f}%"></div></div>'
+        f'<div class="progress-source">{source_text}</div>'
+        f'<div class="progress-stages">{"".join(stage_badges)}</div>'
         + "</div>"
     )
 
@@ -745,6 +810,10 @@ def _task_snapshot_html(extra: str = "") -> str:
         current_stage = _TASK["current_stage"]
         stage_start = _TASK["stage_start"]
         active_serial = _TASK["active_serial"]
+        progress_percent = _TASK["progress_percent"]
+        progress_is_native = _TASK["progress_is_native"]
+        stage_current = _TASK["stage_current"]
+        stage_total = _TASK["stage_total"]
         status_lines = list(_TASK["status_lines"])
         last_activity = _TASK["last_activity"]
         warning_count = _TASK["warning_count"]
@@ -765,7 +834,7 @@ def _task_snapshot_html(extra: str = "") -> str:
                 "最近警告: " + html.escape(last_warning[:240]) + "</div>"
             )
     return (
-        _build_progress_html(completed_stages, current_stage, stage_start, active_serial)
+        _build_progress_html(completed_stages, current_stage, stage_start, active_serial, progress_percent, progress_is_native, stage_current, stage_total)
         + "".join(status_lines)
         + live_status
         + extra
@@ -918,6 +987,11 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
                             f'<span class="spinner"></span> 正在{label}...</div>'
                         )
                         break
+            with _task_lock:
+                if not _TASK["progress_is_native"]:
+                    _TASK["progress_percent"] = _fallback_progress(
+                        _TASK["completed_stages"], _TASK["current_stage"]
+                    )
 
         _maybe_show_progress_info(msg)
 
@@ -955,6 +1029,9 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
 
     cmd = [
         "babeldoc",
+        # BabelDOC 仅在 debug 日志中输出包含 overall_progress 的结构化进度事件。
+        # 这些事件会被 _record_native_progress 提取，页面不展示原始调试日志。
+        "--debug",
         "--files", pdf_file,
         "--openai",
         "--openai-model", model,
@@ -1054,6 +1131,7 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
             raw = line.rstrip()
             if not raw:
                 continue
+            _record_native_progress(raw)
             with _task_lock:
                 _TASK["last_activity"] = time.time()
 
@@ -1065,7 +1143,7 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
                     parsed = _parse_log(log_buffer)
                     if parsed:
                         _handle_log_line(parsed, raw_stage)
-                    else:
+                    elif not _record_native_progress(log_buffer):
                         print(log_buffer, file=_sys.stderr)
                 log_buffer = raw
 
@@ -1074,6 +1152,8 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
             parsed = _parse_log(log_buffer)
             if parsed:
                 _handle_log_line(parsed, raw_stage)
+            elif not _record_native_progress(log_buffer):
+                print(log_buffer, file=_sys.stderr)
 
         if _stop_event.is_set():
             _finish(
@@ -1122,6 +1202,7 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
         with _task_lock:
             _TASK["current_stage"] = None
             _TASK["completed_stages"] = [name for name, _, _ in STAGE_WEIGHTS]
+            _TASK["progress_percent"] = 100.0
 
         output_files = []
         for ext in ["*.pdf", "*.PDF"]:
@@ -1234,6 +1315,10 @@ def translate_pdf(
             last_activity=time.time(),
             warning_count=0,
             last_warning="",
+            progress_percent=0.0,
+            progress_is_native=False,
+            stage_current=None,
+            stage_total=None,
         )
 
     worker = threading.Thread(
@@ -1753,23 +1838,18 @@ CUSTOM_CSS = """
         margin-bottom: 10px; padding-bottom: 10px;
         border-bottom: 1px solid var(--log-border);
     }
-    .progress-text { font-size: 12.5px; display: block; margin-bottom: 6px; color: var(--tx); }
-    .progress-bar {
-        width: 100%; height: 12px;
-        background: var(--log-border); border-radius: 999px;
-        overflow: hidden; display: flex;
-        border: none;
-    }
-    .progress-bar > div {
-        height: 100%;
-        border-right: 2px solid var(--panel);
-        transition: background .3s;
-    }
-    .pg-done    { background: linear-gradient(180deg,#22C55E,#16A34A); }
-    .pg-current { background: linear-gradient(180deg,#38BDF8,#0284C7); animation: pulse-current 1.2s ease-in-out infinite; }
-    .pg-pending { background: rgba(128,130,150,.25); }
+    .progress-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
+    .progress-text { min-width: 0; color: var(--tx); font-size: 12.5px; line-height: 1.45; }
+    .progress-value { flex: 0 0 auto; color: var(--brand); font-size: 15px; font-weight: 750; font-variant-numeric: tabular-nums; }
+    .progress-track { width: 100%; height: 12px; overflow: hidden; border-radius: 999px; background: var(--log-border); }
+    .progress-fill { height: 100%; min-width: 0; border-radius: inherit; background: linear-gradient(90deg,#22C55E 0%,#16A34A 45%,#0284C7 100%); transition: width .45s ease; }
+    .progress-source { margin-top: 5px; color: var(--tx-3); font-size: 10.5px; }
+    .progress-stages { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .progress-stage { padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--tx-3); font-size: 10.5px; line-height: 1.35; }
+    .progress-stage.done { background: rgba(22,163,74,.10); border-color: rgba(22,163,74,.25); color: var(--ok); }
+    .progress-stage.current { background: var(--brand-soft); border-color: var(--brand-ring); color: var(--brand); font-weight: 650; }
+    .progress-stage.pending { background: var(--panel-2); }
     @keyframes pulse-current { 0%,100%{opacity:1} 50%{opacity:.6} }
-    .progress-bar > div[title] { cursor: help; }
 
     /* ===== 预设弹窗 ===== */
     .preset-modal-overlay {
