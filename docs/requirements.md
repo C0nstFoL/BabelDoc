@@ -43,4 +43,4 @@
 ## REQ-007 开发中
 - 描述：使用 BabelDOC Python API 获取原生精确进度，同时输出正常译文
 - 提出日期：2026-09-22
-- 备注：替换 CLI `--debug` 日志解析为 `async_translate()` 事件消费；配置保持 `debug=False`，避免向译文注入调试框和标记。
+- 备注：替换 CLI `--debug` 日志解析为 `async_translate()` 事件消费；配置保持 `debug=False`，避免向译文注入调试框和标记；实现提交：115af8f，待人工审核后转为已完成。
