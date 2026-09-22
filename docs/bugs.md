@@ -38,3 +38,8 @@
 - 位置：babeldoc_translator.py:475, 850, 1820
 - 描述：调试模式生成的 `.decompressed.pdf` 被混入译文下载列表；日志行的时间戳未占用固定列，且分隔线被注入时间文本后发生错位。
 - 修复：过滤调试 PDF，并将日志时间固定为独立列；分隔线不再写入时间戳。
+
+## BUG-007 已修复
+- 位置：babeldoc_translator.py:1040
+- 描述：为读取精确进度而使用 CLI `--debug`，导致 BabelDOC 将调试框和布局标记绘制到最终译文。
+- 修复：改用 `async_translate()` 原生事件并保持 `debug=False`，在不污染 PDF 的前提下更新精确进度。
