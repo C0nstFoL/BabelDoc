@@ -548,13 +548,32 @@ def show_history_files(task_id: str):
     return original, results, _history_detail_html(record), gr.update(value=False)
 
 
-def select_history_row(evt: gr.SelectData):
-    """表格行点击直接选中任务，避免再从重复的下拉列表中查找。"""
-    row_index = evt.index[0] if isinstance(evt.index, tuple) else evt.index
+def select_history_row(table_data: list[list[str]], evt: gr.SelectData):
+    """表格行点击直接选中任务。
+
+    以事件携带的行内容匹配记录，避免筛选或排序后使用视觉行号取错任务。
+    """
+    row_value = evt.row_value
+    if not row_value:
+        row_index = evt.index[0] if isinstance(evt.index, tuple) else evt.index
+        row_value = table_data[row_index] if isinstance(row_index, int) and 0 <= row_index < len(table_data) else None
     records = _load_history()
-    if not isinstance(row_index, int) or not 0 <= row_index < len(records):
+    if not row_value:
         return gr.update(), None, None, _history_detail_html(None), gr.update(value=False)
-    task_id = records[row_index].get("task_id")
+    filename, record_time = str(row_value[0]), str(row_value[1])
+    model = str(row_value[3]) if len(row_value) > 3 else ""
+    record = next(
+        (
+            r for r in records
+            if r.get("filename", "") == filename
+            and r.get("time", "") == record_time
+            and r.get("model", "") == model
+        ),
+        None,
+    )
+    if not record:
+        return gr.update(), None, None, _history_detail_html(None), gr.update(value=False)
+    task_id = record.get("task_id")
     original, results, detail, confirm_reset = show_history_files(task_id)
     return gr.update(value=task_id), original, results, detail, confirm_reset
 
@@ -1948,6 +1967,9 @@ CUSTOM_CSS = """
     .history-table { margin-bottom: 10px !important; }
     .history-table thead th { white-space: nowrap !important; }
     .history-table tbody td { cursor: pointer !important; }
+    .history-table :is(td, th, [role="gridcell"]):focus {
+        outline: none !important; box-shadow: none !important; border-color: inherit !important;
+    }
     .history-detail {
         display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
         padding: 10px 12px; margin: 2px 0 10px;
@@ -2444,6 +2466,7 @@ with gr.Blocks(
                     # 通过 static_columns 锁定全部列，保留行选择但不允许修改历史数据。
                     interactive=True,
                     static_columns=[0, 1, 2, 3, 4, 5, 6],
+                    type="array",
                     wrap=True,
                     row_count=8,
                     max_height=460,
@@ -2908,8 +2931,10 @@ with gr.Blocks(
 
     history_table.select(
         fn=select_history_row,
-        inputs=[],
+        inputs=[history_table],
         outputs=[history_select, history_original_file, history_result_file, history_detail, history_delete_confirm],
+        queue=False,
+        show_progress="hidden",
     )
 
     history_select.change(
