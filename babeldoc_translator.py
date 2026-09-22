@@ -2550,9 +2550,7 @@ with gr.Blocks(
                     value=_history_detail_html(None),
                 )
                 with gr.Row():
-                    history_download_original_btn = gr.Button("📥 载入原文", scale=1)
-                    history_download_result_btn = gr.Button("📥 载入译文", scale=1)
-                    history_delete_confirm = gr.Checkbox("确认删除记录及输出文件", scale=2)
+                    history_delete_confirm = gr.Checkbox("确认删除记录及输出文件", scale=3)
                     history_delete_btn = gr.Button("🗑️ 删除任务", variant="stop", scale=1)
                 with gr.Row():
                     history_original_file = gr.File(label="原始文档", scale=1)
@@ -3006,16 +3004,6 @@ with gr.Blocks(
         outputs=[history_original_file, history_result_file, history_detail, history_delete_confirm],
     )
 
-    history_download_original_btn.click(
-        fn=lambda task_id: download_history_file(task_id, "original"),
-        inputs=[history_select],
-        outputs=[history_original_file],
-    )
-    history_download_result_btn.click(
-        fn=lambda task_id: download_history_file(task_id, "result"),
-        inputs=[history_select],
-        outputs=[history_result_file],
-    )
     history_delete_btn.click(
         fn=delete_history_selected,
         inputs=[history_select, history_delete_confirm],
