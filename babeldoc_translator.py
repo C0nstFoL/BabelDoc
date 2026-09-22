@@ -1970,13 +1970,16 @@ CUSTOM_CSS = """
     .history-table :is(td, th, [role="gridcell"]):focus {
         outline: none !important; box-shadow: none !important; border-color: inherit !important;
     }
-    /* 将 Gradio 的单元格选中状态扩展为整行黄色边框。 */
-    .history-table tbody tr:has(td.cell-selected) {
-        outline: 2px solid #eab308 !important;
-        outline-offset: -2px;
-    }
-    .history-table tbody tr:has(td.cell-selected) td {
+    /* Gradio 6 使用带 data-row/data-col 的网格单元格，由前端同步整行选中类。 */
+    .history-table .history-row-selected {
         background-color: color-mix(in srgb, #fef08a 18%, transparent) !important;
+        box-shadow: inset 0 2px #eab308, inset 0 -2px #eab308 !important;
+    }
+    .history-table .history-row-selected[data-col="0"] {
+        box-shadow: inset 2px 0 #eab308, inset 0 2px #eab308, inset 0 -2px #eab308 !important;
+    }
+    .history-table .history-row-selected[data-col="6"] {
+        box-shadow: inset -2px 0 #eab308, inset 0 2px #eab308, inset 0 -2px #eab308 !important;
     }
     .history-table .cell-selected,
     .history-table .cell-selected::before,
@@ -3011,6 +3014,35 @@ with gr.Blocks(
         fn=refresh_history,
         inputs=[history_select],
         outputs=[history_table, history_select, history_detail],
+    )
+
+    # Dataframe 只给点击的网格单元格添加 cell-selected；根据 data-row
+    # 将该状态同步到同行的所有单元格，以显示完整的行选择框。
+    demo.load(
+        fn=None,
+        inputs=[],
+        outputs=[],
+        js="""
+        () => {
+            if (window.__babeldocHistoryRowSelectionInstalled) return;
+            window.__babeldocHistoryRowSelectionInstalled = true;
+            document.addEventListener('click', (event) => {
+                const cell = event.target.closest('.history-table [data-row]');
+                if (!cell) return;
+                requestAnimationFrame(() => {
+                    const table = cell.closest('.history-table');
+                    const selectedCell = table?.querySelector('.cell-selected[data-row]');
+                    const selectedRow = selectedCell?.dataset.row;
+                    table?.querySelectorAll('[data-row]').forEach((rowCell) => {
+                        rowCell.classList.toggle(
+                            'history-row-selected',
+                            selectedRow !== undefined && rowCell.dataset.row === selectedRow,
+                        );
+                    });
+                });
+            });
+        }
+        """,
     )
 
     # 主题初始化：读取本地存储的偏好（默认跟随系统）
