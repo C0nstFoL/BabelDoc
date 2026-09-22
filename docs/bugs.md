@@ -62,4 +62,4 @@
 ## BUG-011 已修复（465c9b8、a8bdd0e）
 - 位置：babeldoc_translator.py:1973
 - 描述：历史翻译记录表格点击记录时，Gradio 默认黄色选择框只覆盖一个单元格，无法直观识别当前选中的整条记录。
-- 修复：根据 Gradio Dataframe 网格单元格的 `data-row` 属性将选中状态同步到同行所有单元格，仅显示整行浅色背景。
+- 修复：根据 Gradio Dataframe 网格单元格的 `data-row` 属性将选中状态同步到同行所有单元格，禁用 `body-cell.cell-selected` 的默认橙色 ring，仅保留整行浅色背景。
