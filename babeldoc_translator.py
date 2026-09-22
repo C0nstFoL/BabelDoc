@@ -1481,22 +1481,18 @@ CUSTOM_CSS = """
     .col-right { flex: 6 1 0 !important; min-width: 0 !important; display: flex !important; flex-direction: column !important; }
     .col-left > *, .col-right > * { margin-bottom: 0 !important; }
     .col-left > * + *, .col-right > * + * { margin-top: 14px !important; }
-    /* 左列：上传卡片拉伸填满剩余高度（拖拽区天然适合长高），按钮沉底对齐 */
+    /* 上传区保持紧凑：不再为了和右侧配置卡片等高而填充大片空白。 */
     .col-left > .upload-card {
-        flex: 1 1 auto !important;
+        flex: 0 0 auto !important;
         display: flex !important;
         flex-direction: column !important;
     }
-    .upload-card > *:last-child { flex: 1 1 auto !important; display: flex !important; flex-direction: column !important; }
-    /* 逐级弹性传导，让虚线拖拽框撑满整个剩余高度 */
-    .upload-card > *:last-child > * { flex: 1 1 auto !important; display: flex !important; flex-direction: column !important; }
-    .upload-card > *:last-child > * > * { flex: 1 1 auto !important; display: flex !important; flex-direction: column !important; }
+    .upload-card > *:last-child { flex: 0 0 auto !important; }
     .upload-card .placeholder[class*="svelte"] {
-        flex: 1 1 auto !important;
-        height: 100% !important;
-        min-height: 240px !important;
+        min-height: 132px !important;
+        padding: 18px !important;
     }
-    .col-left > .action-row { margin-top: auto !important; }
+    .col-left > .action-row { margin-top: 14px !important; }
     .llm-card { display: flex !important; flex-direction: column !important; }
     /* 当前生效配置：品牌色信息面板 */
     .llm-summary {
