@@ -753,8 +753,10 @@ def _record_native_progress_event(event: dict) -> None:
         progress = 0.0
 
     previous_stage = None
+    stage_start = 0.0
     with _task_lock:
         previous_stage = _TASK["current_stage"]
+        stage_start = _TASK["stage_start"]
         _TASK["progress_is_native"] = True
         _TASK["progress_percent"] = max(_TASK["progress_percent"], progress)
         if stage:
@@ -769,9 +771,11 @@ def _record_native_progress_event(event: dict) -> None:
     if stage and stage != previous_stage:
         label = next((label for name, _, label in STAGE_WEIGHTS if name == stage), stage)
         _task_add_status(
-            '<div class="log-line stage-start">'
+            f'<div class="log-line stage-start" data-progress-stage="{html.escape(stage, quote=True)}">'
             f'<span class="spinner"></span> 正在{label}...</div>'
         )
+    if stage and event_type == "progress_end":
+        _complete_stage_status(stage, max(0.0, time.time() - stage_start))
 
 
 def _fallback_progress(completed_stages: list[str], current_stage: str | None) -> float:
@@ -921,6 +925,34 @@ def _task_add_status(html: str) -> None:
         html = ts + html
     with _task_lock:
         _TASK["status_lines"].append(html)
+
+
+def _complete_stage_status(stage: str, elapsed_seconds: float) -> None:
+    """将该阶段原先的加载日志原位替换为完成状态，避免遗留转圈动画。"""
+    label = next((label for name, _, label in STAGE_WEIGHTS if name == stage), stage)
+    marker = f'data-progress-stage="{html.escape(stage, quote=True)}"'
+    minutes, seconds = divmod(int(elapsed_seconds), 60)
+    duration = f"{minutes}m{seconds}s" if minutes else f"{seconds}s"
+    replacement_done = False
+    with _task_lock:
+        for index in range(len(_TASK["status_lines"]) - 1, -1, -1):
+            line = _TASK["status_lines"][index]
+            if marker not in line:
+                continue
+            timestamp = re.search(r'<span class="log-time">.*?</span>\s*', line)
+            prefix = timestamp.group(0) if timestamp else ""
+            _TASK["status_lines"][index] = (
+                f'<div class="log-line stage-done" {marker}>'
+                f'{prefix}&#10003; {label} 完成 '
+                f'<span class="stage-duration">({duration})</span></div>'
+            )
+            replacement_done = True
+            break
+    if not replacement_done:
+        _task_add_status(
+            '<div class="log-line stage-done">'
+            f'&#10003; {label} 完成 <span class="stage-duration">({duration})</span></div>'
+        )
 
 
 def _task_snapshot_html(extra: str = "") -> str:

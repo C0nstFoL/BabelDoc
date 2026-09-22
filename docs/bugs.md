@@ -43,3 +43,8 @@
 - 位置：babeldoc_translator.py:1040
 - 描述：为读取精确进度而使用 CLI `--debug`，导致 BabelDOC 将调试框和布局标记绘制到最终译文。
 - 修复：改用 `async_translate()` 原生事件并保持 `debug=False`，在不污染 PDF 的前提下更新精确进度。
+
+## BUG-008 已修复
+- 位置：babeldoc_translator.py:740
+- 描述：原生阶段完成事件只更新进度条状态，阶段开始日志保留加载动画，未切换为完成图标。
+- 修复：在 `progress_end` 时原位替换阶段日志为完成状态并附带阶段耗时。
