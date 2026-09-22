@@ -83,3 +83,8 @@
 - 位置：babeldoc_translator.py:2576
 - 描述：删除确认复选框未在页面中稳定显示，导致确认操作不可用。
 - 修复：移除未稳定显示的复选框，改用删除按钮自身进行两段式确认。
+
+## BUG-016
+- 位置：babeldoc_translator.py:639
+- 描述：Gradio 6 的 `Button` 组件不接受 `label` 参数，删除按钮两段式确认状态更新触发 `Button.__init__() got an unexpected keyword argument 'label'`；按钮初始状态也未按“是否已选择记录”控制。
+- 修复：

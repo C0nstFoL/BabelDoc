@@ -545,7 +545,13 @@ def show_history_files(task_id: str):
         results = None
     if isinstance(results, str):
         results = [results]
-    return original, results, _history_detail_html(record)
+    return (
+        original,
+        results,
+        _history_detail_html(record),
+        gr.update(value="🗑️ 删除任务", interactive=bool(task_id)),
+        None,
+    )
 
 
 def select_history_row(table_data: list[list[str]], evt: gr.SelectData):
@@ -559,7 +565,14 @@ def select_history_row(table_data: list[list[str]], evt: gr.SelectData):
         row_value = table_data[row_index] if isinstance(row_index, int) and 0 <= row_index < len(table_data) else None
     records = _load_history()
     if not row_value:
-        return gr.update(), None, None, _history_detail_html(None)
+        return (
+            gr.update(),
+            None,
+            None,
+            _history_detail_html(None),
+            gr.update(value="🗑️ 删除任务", interactive=False),
+            None,
+        )
     filename, record_time = str(row_value[0]), str(row_value[1])
     model = str(row_value[3]) if len(row_value) > 3 else ""
     record = next(
@@ -572,10 +585,24 @@ def select_history_row(table_data: list[list[str]], evt: gr.SelectData):
         None,
     )
     if not record:
-        return gr.update(), None, None, _history_detail_html(None)
+        return (
+            gr.update(),
+            None,
+            None,
+            _history_detail_html(None),
+            gr.update(value="🗑️ 删除任务", interactive=False),
+            None,
+        )
     task_id = record.get("task_id")
     original, results, detail = show_history_files(task_id)
-    return gr.update(value=task_id), original, results, detail
+    return (
+        gr.update(value=task_id),
+        original,
+        results,
+        detail,
+        gr.update(value="🗑️ 删除任务", interactive=True),
+        None,
+    )
 
 
 def refresh_history(selected_task_id: str | None = None):
@@ -587,6 +614,8 @@ def refresh_history(selected_task_id: str | None = None):
         _history_table(records),
         gr.update(choices=_history_choices(records), value=selected_task_id),
         _history_detail_html(_get_history_record(selected_task_id)),
+        gr.update(value="🗑️ 删除任务", interactive=bool(selected_task_id)),
+        None,
     )
 
 
@@ -638,13 +667,13 @@ def delete_history_selected(task_id: str):
 
 def click_history_delete(task_id: str | None, armed_task_id: str | None):
     """删除按钮两段式确认：第一次进入待确认状态，第二次执行删除。"""
-    reset_button = gr.update(label="🗑️ 删除任务", interactive=True)
+    reset_button = gr.update(value="🗑️ 删除任务", interactive=False)
     keep_ui = (gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
     if not task_id:
         return reset_button, None, *keep_ui
     if armed_task_id != task_id:
         return (
-            gr.update(label="⚠️ 再次点击确认删除", interactive=True),
+            gr.update(value="⚠️ 再次点击确认删除", interactive=True),
             task_id,
             *keep_ui,
         )
@@ -2574,6 +2603,7 @@ with gr.Blocks(
                         "🗑️ 删除任务",
                         variant="stop",
                         scale=1,
+                        interactive=False,
                     )
                 with gr.Row():
                     history_original_file = gr.File(label="原始文档", scale=1)
@@ -2998,25 +3028,50 @@ with gr.Blocks(
     history_refresh_btn.click(
         fn=refresh_history,
         inputs=[history_select],
-        outputs=[history_table, history_select, history_detail],
+        outputs=[
+            history_table,
+            history_select,
+            history_detail,
+            history_delete_btn,
+            history_delete_state,
+        ],
     )
 
     # 翻译/恢复进度结束后，顺带刷新历史记录列表
     translate_event.then(
         fn=refresh_history,
         inputs=[history_select],
-        outputs=[history_table, history_select, history_detail],
+        outputs=[
+            history_table,
+            history_select,
+            history_detail,
+            history_delete_btn,
+            history_delete_state,
+        ],
     )
     resume_event.then(
         fn=refresh_history,
         inputs=[history_select],
-        outputs=[history_table, history_select, history_detail],
+        outputs=[
+            history_table,
+            history_select,
+            history_detail,
+            history_delete_btn,
+            history_delete_state,
+        ],
     )
 
     history_table.select(
         fn=select_history_row,
         inputs=[history_table],
-        outputs=[history_select, history_original_file, history_result_file, history_detail],
+        outputs=[
+            history_select,
+            history_original_file,
+            history_result_file,
+            history_detail,
+            history_delete_btn,
+            history_delete_state,
+        ],
         queue=False,
         show_progress="hidden",
     )
@@ -3024,7 +3079,13 @@ with gr.Blocks(
     history_select.change(
         fn=show_history_files,
         inputs=[history_select],
-        outputs=[history_original_file, history_result_file, history_detail],
+        outputs=[
+            history_original_file,
+            history_result_file,
+            history_detail,
+            history_delete_btn,
+            history_delete_state,
+        ],
     )
 
     history_delete_btn.click(
@@ -3078,7 +3139,13 @@ with gr.Blocks(
     demo.load(
         fn=refresh_history,
         inputs=[history_select],
-        outputs=[history_table, history_select, history_detail],
+        outputs=[
+            history_table,
+            history_select,
+            history_detail,
+            history_delete_btn,
+            history_delete_state,
+        ],
     )
 
     # Dataframe 只给点击的网格单元格添加 cell-selected；根据 data-row
