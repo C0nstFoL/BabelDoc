@@ -2,6 +2,7 @@ import os
 import re
 import json
 import html
+import asyncio
 import uuid
 import base64
 import subprocess
@@ -554,6 +555,8 @@ def delete_history_selected(task_id: str):
 # ---- 停止机制 ---- #
 _stop_event = threading.Event()
 _running_process: subprocess.Popen | None = None
+_translation_loop: asyncio.AbstractEventLoop | None = None
+_translation_task: asyncio.Task | None = None
 
 # ---- 后台任务全局状态 ----
 # 翻译在独立线程中运行，状态写入这个全局字典，
@@ -593,6 +596,12 @@ def request_stop():
             proc.terminate()
         except Exception:
             pass
+    # API 模式没有 CLI 子进程；取消事件循环中的任务会让 async_translate
+    # 向 BabelDOC 的 ProgressMonitor 传递取消信号。
+    loop = _translation_loop
+    task = _translation_task
+    if loop and task and not task.done():
+        loop.call_soon_threadsafe(task.cancel)
 
 
 def _reset_stop():
@@ -600,6 +609,72 @@ def _reset_stop():
     _stop_event.clear()
     global _running_process
     _running_process = None
+
+
+async def _translate_with_native_events(
+    pdf_file: str,
+    api_key: str,
+    base_url: str,
+    model: str,
+    lang_in: str,
+    lang_out: str,
+    output_dir: str,
+    qps: int,
+    pool_workers: int,
+    output_mode: str,
+    disable_thinking: bool,
+):
+    """通过 BabelDOC Python API 翻译，并直接接收精确进度事件。
+
+    这里必须保持 debug=False：BabelDOC 的 debug 会向最终 PDF 注入布局框与标记。
+    """
+    global _translation_loop, _translation_task
+    from babeldoc.docvision.doclayout import DocLayoutModel
+    from babeldoc.format.pdf.high_level import async_translate
+    from babeldoc.format.pdf.translation_config import TranslationConfig
+    from babeldoc.translator.translator import OpenAITranslator, set_translate_rate_limiter
+
+    _translation_loop = asyncio.get_running_loop()
+    _translation_task = asyncio.current_task()
+    try:
+        translator = OpenAITranslator(
+            lang_in=lang_in,
+            lang_out=lang_out,
+            model=model,
+            base_url=base_url.rstrip("/") + "/",
+            api_key=api_key,
+            thinking="disabled" if disable_thinking else None,
+        )
+        set_translate_rate_limiter(qps)
+        doc_layout_model = DocLayoutModel.load_onnx()
+        config = TranslationConfig(
+            translator=translator,
+            term_extraction_translator=translator,
+            input_file=pdf_file,
+            lang_in=lang_in,
+            lang_out=lang_out,
+            doc_layout_model=doc_layout_model,
+            output_dir=output_dir,
+            debug=False,
+            no_dual=output_mode == "mono_only",
+            no_mono=output_mode == "dual_only",
+            qps=qps,
+            pool_max_workers=pool_workers,
+            report_interval=1,
+            use_rich_pbar=False,
+            auto_enable_ocr_workaround=True,
+        )
+        getattr(doc_layout_model, "init_font_mapper", lambda _config: None)(config)
+        async for event in async_translate(config):
+            _record_native_progress_event(event)
+            if event.get("type") == "error":
+                raise RuntimeError(event.get("error", "BabelDOC 翻译失败"))
+            if event.get("type") == "finish":
+                return event["translate_result"]
+        raise RuntimeError("BabelDOC 未返回翻译结果")
+    finally:
+        _translation_task = None
+        _translation_loop = None
 
 
 # ---- 日志与进度 ---- #
@@ -663,6 +738,40 @@ def _record_native_progress(raw: str) -> bool:
             if event_type == "progress_end" and stage not in _TASK["completed_stages"]:
                 _TASK["completed_stages"].append(stage)
     return True
+
+
+def _record_native_progress_event(event: dict) -> None:
+    """直接消费 async_translate 的原生事件，无需开启 BabelDOC 调试模式。"""
+    event_type = event.get("type", "")
+    if event_type not in {"progress_start", "progress_update", "progress_end"}:
+        return
+    stage = _canonical_stage(event.get("stage"))
+    progress = event.get("overall_progress", 0.0)
+    try:
+        progress = min(100.0, max(0.0, float(progress)))
+    except (TypeError, ValueError):
+        progress = 0.0
+
+    previous_stage = None
+    with _task_lock:
+        previous_stage = _TASK["current_stage"]
+        _TASK["progress_is_native"] = True
+        _TASK["progress_percent"] = max(_TASK["progress_percent"], progress)
+        if stage:
+            _TASK["current_stage"] = stage
+            _TASK["stage_current"] = event.get("stage_current")
+            _TASK["stage_total"] = event.get("stage_total")
+            if event_type == "progress_end" and stage not in _TASK["completed_stages"]:
+                _TASK["completed_stages"].append(stage)
+            if stage != previous_stage:
+                _TASK["stage_start"] = time.time()
+
+    if stage and stage != previous_stage:
+        label = next((label for name, _, label in STAGE_WEIGHTS if name == stage), stage)
+        _task_add_status(
+            '<div class="log-line stage-start">'
+            f'<span class="spinner"></span> 正在{label}...</div>'
+        )
 
 
 def _fallback_progress(completed_stages: list[str], current_stage: str | None) -> float:
@@ -1041,9 +1150,6 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
 
     cmd = [
         "babeldoc",
-        # BabelDOC 仅在 debug 日志中输出包含 overall_progress 的结构化进度事件。
-        # 这些事件会被 _record_native_progress 提取，页面不展示原始调试日志。
-        "--debug",
         "--files", pdf_file,
         "--openai",
         "--openai-model", model,
@@ -1120,6 +1226,75 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
                 "result_files": output_files or [],
             }
         )
+
+    # 直接消费 BabelDOC API 的进度事件。此前的 CLI 方案需 --debug 才能读到
+    # overall_progress，进而会把调试框绘制到最终 PDF；API 方案不需要该开关。
+    try:
+        result = asyncio.run(
+            _translate_with_native_events(
+                pdf_file=pdf_file,
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+                lang_in=lang_in,
+                lang_out=lang_out,
+                output_dir=output_dir,
+                qps=sp["qps"],
+                pool_workers=sp["pool"],
+                output_mode=output_mode,
+                disable_thinking=disable_thinking,
+            )
+        )
+        if _stop_event.is_set():
+            _finish(
+                '<div class="log-line log-warning" style="font-weight:bold">&#9209; 翻译已停止</div>',
+                status="已停止",
+            )
+            return
+
+        output_files = []
+        for path in (getattr(result, "dual_pdf_path", None), getattr(result, "mono_pdf_path", None)):
+            if path and _is_downloadable_result_pdf(str(path)):
+                output_files.append(str(path))
+        output_files = list(dict.fromkeys(output_files))
+        if not output_files:
+            raise RuntimeError("未找到输出 PDF 文件")
+
+        with _task_lock:
+            _TASK["current_stage"] = None
+            _TASK["completed_stages"] = [name for name, _, _ in STAGE_WEIGHTS]
+            _TASK["progress_percent"] = 100.0
+            _TASK["result_files"] = output_files
+            overall_start = _TASK["overall_start"]
+        total_elapsed = time.time() - overall_start
+        tm, ts = divmod(int(total_elapsed), 60)
+        total_duration = f"{tm}m{ts}s" if tm > 0 else f"{ts}s"
+        result_file = next((f for f in output_files if "dual" in f.lower() or "bilingual" in f.lower()), output_files[0])
+        extra = (
+            '<div class="log-line log-success">&#10004; 翻译完成！'
+            f"(总用时 {total_duration})</div>"
+            '<div class="log-line log-info" style="margin-top:4px">输出文件:</div>'
+            + "".join(
+                '<div class="log-line log-info" style="padding-left:12px;font-size:12px">'
+                f"&#128196; {os.path.basename(f)}</div>"
+                for f in output_files
+            )
+        )
+        _finish(extra, result_file, output_files=output_files)
+        return
+    except asyncio.CancelledError:
+        _finish(
+            '<div class="log-line log-warning" style="font-weight:bold">&#9209; 翻译已停止</div>',
+            status="已停止",
+        )
+        return
+    except Exception as e:
+        _finish(
+            '<div class="log-line log-error" style="font-weight:bold">'
+            f"&#10060; 错误: {html.escape(str(e))}</div>",
+            status="失败",
+        )
+        return
 
     try:
         process = subprocess.Popen(
