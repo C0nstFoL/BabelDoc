@@ -459,6 +459,14 @@ def _status_mark(status: str) -> str:
     return status
 
 
+def _is_downloadable_result_pdf(path: str | None) -> bool:
+    """仅保留用户可下载的最终译文，排除 BabelDOC 调试解压 PDF。"""
+    if not path or not os.path.isfile(path):
+        return False
+    normalized = path.lower()
+    return normalized.endswith(".pdf") and not normalized.endswith(".decompressed.pdf")
+
+
 def _history_choices(records: list[dict]) -> list[tuple[str, str]]:
     """生成 Dropdown 的 (显示名, task_id) 选项列表"""
     choices = []
@@ -524,10 +532,10 @@ def download_history_file(task_id: str, kind: str):
                 if path and os.path.exists(path):
                     return path
                 raise gr.Error("原文文件不存在或已被清理")
-            files = [f for f in (r.get("result_files") or []) if f and os.path.exists(f)]
+            files = [f for f in (r.get("result_files") or []) if _is_downloadable_result_pdf(f)]
             if not files:
                 path = r.get("result_file")
-                if path and os.path.exists(path):
+                if _is_downloadable_result_pdf(path):
                     return path
                 raise gr.Error("文件不存在或已被清理")
             return files
@@ -795,7 +803,10 @@ def _build_progress_html(
 def _task_add_status(html: str) -> None:
     """向全局任务状态追加一条日志（加锁保证线程安全）"""
     ts = f'<span class="log-time">{datetime.now().strftime("%H:%M:%S")}</span> '
-    if html.startswith("<div"):
+    # 分隔线不能承载文字；向其中注入时间会导致高度为 0 的元素发生视觉错位。
+    if "log-separator" in html:
+        pass
+    elif html.startswith("<div"):
         html = re.sub(r"(<div[^>]*>)", r"\1" + ts, html, count=1)
     else:
         html = ts + html
@@ -820,10 +831,11 @@ def _task_snapshot_html(extra: str = "") -> str:
         last_warning = _TASK["last_warning"]
     live_status = ""
     if current_stage and last_activity:
+        live_time = '<span class="log-time log-time-live">实时</span> '
         idle_seconds = max(0, int(time.time() - last_activity))
         live_status = (
             '<div class="log-line log-info" style="font-size:12px">'
-            f"&#128994; 子进程运行中 · 最近输出 {idle_seconds}s 前"
+            f"{live_time}&#128994; 子进程运行中 · 最近输出 {idle_seconds}s 前"
         )
         if warning_count:
             live_status += f" · 已发生 {warning_count} 次警告/降级重试"
@@ -831,7 +843,7 @@ def _task_snapshot_html(extra: str = "") -> str:
         if last_warning:
             live_status += (
                 '<div class="log-line log-warning" style="font-size:12px">'
-                "最近警告: " + html.escape(last_warning[:240]) + "</div>"
+                f"{live_time}最近警告: " + html.escape(last_warning[:240]) + "</div>"
             )
     return (
         _build_progress_html(completed_stages, current_stage, stage_start, active_serial, progress_percent, progress_is_native, stage_current, stage_total)
@@ -1217,6 +1229,8 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
         # 排除 OCR 预处理的中间输入文件
         if ocr_input_file:
             output_files = [f for f in output_files if os.path.abspath(f) != os.path.abspath(ocr_input_file)]
+        # --debug 为获取精确进度生成的 .decompressed.pdf 仅供排障，不能混入下载结果。
+        output_files = [f for f in output_files if _is_downloadable_result_pdf(f)]
 
         if output_files:
             total_elapsed = time.time() - overall_start
@@ -1797,11 +1811,18 @@ CUSTOM_CSS = """
         flex-shrink: 0;
     }
     .log-line {
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        margin: 0; line-height: 1.65; border-radius: 4px; padding: 0 6px;
+        display: flex; align-items: flex-start; gap: 7px;
+        margin: 0; min-width: 0; line-height: 1.65; border-radius: 4px; padding: 0 6px;
+        overflow-wrap: anywhere;
     }
     .log-line b { font-weight: 600; }
-    .log-time { color: var(--tx-3); font-size: 11px; font-family: var(--mono); }
+    .log-time {
+        flex: 0 0 58px; padding-top: 1px; color: var(--tx-3);
+        font-size: 11px; font-family: var(--mono); font-variant-numeric: tabular-nums;
+        line-height: 1.65; text-align: right;
+    }
+    .log-time-live { color: var(--info); font-family: inherit; font-size: 10.5px; font-weight: 650; }
+    .log-line:not(:has(.log-time)) { padding-left: 71px; }
     .log-error  { color: var(--err); background: rgba(220,38,38,.07); }
     .log-warning { color: var(--warn); background: rgba(217,119,6,.07); }
     .log-success { color: var(--ok); background: rgba(22,163,74,.08); font-weight: 600; }
