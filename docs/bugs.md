@@ -63,3 +63,8 @@
 - 位置：babeldoc_translator.py:1973
 - 描述：历史翻译记录表格点击记录时，Gradio 默认黄色选择框只覆盖一个单元格，无法直观识别当前选中的整条记录。
 - 修复：根据 Gradio Dataframe 网格单元格的 `data-row` 属性将选中状态同步到同行所有单元格，禁用 `body-cell.cell-selected` 的默认橙色 ring，仅保留整行浅色背景。
+
+## BUG-012 已修复
+- 位置：babeldoc_translator.py:1970
+- 描述：Gradio Dataframe 的 `table-wrap` 使用 `transition: all`，点击表格时状态变化触发缩小动画；同时 Svelte 作用域样式继续绘制默认橙色选择 ring。
+- 修复：禁用历史表格容器和选中单元格的过渡、缩放动画，并将 `--ring-color` 与 `--sel-*` 全部覆盖为透明。
