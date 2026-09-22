@@ -616,9 +616,16 @@ def download_history_file(task_id: str, kind: str):
 
 
 def delete_history_selected(task_id: str, confirmed: bool):
-    """删除选中的历史记录，并刷新表格"""
+    """删除选中的历史记录，并刷新表格；未选中时不触发全局错误。"""
     if not task_id:
-        raise gr.Error("请先在「选择历史任务」下拉框中选择要删除的任务")
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            gr.update(interactive=False),
+        )
     if not confirmed:
         raise gr.Error("删除会移除该任务的历史记录及其输出文件，请先勾选删除确认")
     _delete_history_record(task_id)
@@ -2582,7 +2589,12 @@ with gr.Blocks(
                         min_width=0,
                         elem_classes="history-delete-confirm",
                     )
-                    history_delete_btn = gr.Button("🗑️ 删除任务", variant="stop", scale=1)
+                    history_delete_btn = gr.Button(
+                        "🗑️ 删除任务",
+                        variant="stop",
+                        scale=1,
+                        interactive=False,
+                    )
                 with gr.Row():
                     history_original_file = gr.File(label="原始文档", scale=1)
                     history_result_file = gr.File(
@@ -3039,6 +3051,16 @@ with gr.Blocks(
         fn=delete_history_selected,
         inputs=[history_select, history_delete_confirm],
         outputs=[history_table, history_select, history_original_file, history_result_file, history_detail, history_delete_confirm],
+    )
+
+    # 只有“已选记录 + 已确认删除”两个条件都满足时才允许触发删除，
+    # 避免未选择记录时后端抛出 Gradio Error 并污染整页状态。
+    history_delete_confirm.change(
+        fn=lambda task_id, confirmed: gr.update(interactive=bool(task_id and confirmed)),
+        inputs=[history_select, history_delete_confirm],
+        outputs=[history_delete_btn],
+        queue=False,
+        show_progress="hidden",
     )
 
     # 启动时加载配置：恢复预设列表与当前生效预设
