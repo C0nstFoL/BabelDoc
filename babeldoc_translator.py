@@ -102,6 +102,48 @@ def _preset_summary(preset):
     return f"当前使用：**{preset['name']}** · {preset.get('model', '')} · {preset.get('base_url', '')}"
 
 
+def _format_file_size(size: int) -> str:
+    """将字节数转换为易读的文件大小。"""
+    units = ("B", "KB", "MB", "GB")
+    value = float(size)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{size} B"
+
+
+def file_info_panel(file_value):
+    """生成上传区下方的文件信息面板，兼容 Gradio 返回的临时文件路径。"""
+    if not file_value:
+        return """
+        <div class="file-info-empty">
+            <span class="file-info-empty-icon">🗂️</span>
+            <div><strong>等待选择文件</strong><p>支持单个 PDF 文档。上传后将在这里显示文件属性与翻译前检查状态。</p></div>
+        </div>
+        """
+
+    path = Path(str(file_value))
+    filename = html.escape(path.name)
+    try:
+        size = _format_file_size(path.stat().st_size)
+        status = "已就绪，可选择语言与模型后开始翻译"
+    except OSError:
+        size = "暂不可用"
+        status = "文件信息读取中，请稍候"
+    extension = path.suffix.upper().lstrip(".") or "未知"
+    return f"""
+    <div class="file-info-ready">
+        <div class="file-info-status"><span>✓</span>{status}</div>
+        <div class="file-info-grid">
+            <div><span>文件名称</span><strong title="{filename}">{filename}</strong></div>
+            <div><span>文件大小</span><strong>{size}</strong></div>
+            <div><span>文件格式</span><strong>{html.escape(extension)}</strong></div>
+        </div>
+    </div>
+    """
+
+
 def _test_models_endpoint(api_key, base_url):
     """降级测试：GET {base_url}/models 验证服务可达性与 Key 有效性。
 
@@ -1493,6 +1535,38 @@ CUSTOM_CSS = """
         padding: 18px !important;
     }
     .col-left > .action-row { margin-top: 14px !important; }
+    .file-info-card {
+        flex: 1 1 auto !important;
+        min-height: 164px;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center;
+    }
+    .file-info-empty {
+        display: flex; align-items: center; gap: 12px;
+        color: var(--tx-2); line-height: 1.5;
+    }
+    .file-info-empty-icon {
+        display: inline-flex; align-items: center; justify-content: center;
+        flex: 0 0 40px; width: 40px; height: 40px; border-radius: 12px;
+        background: var(--panel-2); border: 1px solid var(--border); font-size: 18px;
+    }
+    .file-info-empty strong { color: var(--tx); font-size: 13px; }
+    .file-info-empty p { margin: 3px 0 0; font-size: 12px; }
+    .file-info-ready { width: 100%; }
+    .file-info-status {
+        display: flex; align-items: center; gap: 7px; margin-bottom: 12px;
+        color: var(--ok); font-size: 12.5px; font-weight: 600;
+    }
+    .file-info-status span {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 17px; height: 17px; border-radius: 50%;
+        background: rgba(22,163,74,.12); font-size: 11px;
+    }
+    .file-info-grid { display: grid; grid-template-columns: minmax(0, 2fr) repeat(2, minmax(72px, 1fr)); gap: 8px; }
+    .file-info-grid > div { min-width: 0; padding: 9px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--r-sm); }
+    .file-info-grid span { display: block; margin-bottom: 3px; color: var(--tx-3); font-size: 10.5px; }
+    .file-info-grid strong { display: block; overflow: hidden; color: var(--tx); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
     .llm-card { display: flex !important; flex-direction: column !important; }
     /* 当前生效配置：品牌色信息面板 */
     .llm-summary {
@@ -1680,6 +1754,7 @@ CUSTOM_CSS = """
         .col-left > *, .col-right > * { margin-bottom: 14px !important; }
         .col-left > .action-row { margin-top: 0 !important; }
         .col-left > .upload-card { flex: 0 0 auto !important; }
+        .file-info-card { min-height: 0; }
     }
     @media (max-width: 768px) {
         .gradio-container { max-width: 100vw !important; padding: 0 8px !important; }
@@ -1693,6 +1768,9 @@ CUSTOM_CSS = """
         .step-item { font-size: 11px; gap: 5px; padding: 4px 8px; }
         .step-num { width: 16px; height: 16px; font-size: 9.5px; }
         .step-sep { width: 10px; }
+        .file-info-card { min-height: 132px; }
+        .file-info-grid { grid-template-columns: 1fr 1fr; }
+        .file-info-grid > div:first-child { grid-column: 1 / -1; }
         .log-panel { font-size: 11px !important; min-height: 140px; max-height: 320px; padding: 8px !important; }
         .progress-bar { height: 10px; }
         .gradio-container button { font-size: 13px !important; }
@@ -1789,6 +1867,10 @@ with gr.Blocks(
                             )
                             resume_btn = gr.Button("🔄 恢复进度", variant="secondary", size="lg", scale=1)
                             stop_btn = gr.Button("⏹ 停止", variant="stop", size="lg", scale=1)
+
+                        with gr.Group(elem_classes="step-card file-info-card"):
+                            gr.HTML(_panel_head("📄", "", "文件信息", "上传后自动显示文件属性"))
+                            file_info = gr.HTML(file_info_panel(None))
 
                     with gr.Column(elem_classes="col-right"):
                         with gr.Group(elem_classes="step-card llm-card"):
@@ -2019,6 +2101,12 @@ with gr.Blocks(
         fn=lambda: gr.update(value="🚀 开始翻译", interactive=True),
         inputs=[],
         outputs=[translate_btn],
+    )
+
+    pdf_input.change(
+        fn=file_info_panel,
+        inputs=[pdf_input],
+        outputs=[file_info],
     )
 
     # ---- LLM 预设管理事件 ----
@@ -2308,9 +2396,9 @@ with gr.Blocks(
         return None, None, None, ""
 
     clear_btn.click(
-        fn=clear_all,
+        fn=lambda temp_dir: (*clear_all(temp_dir), file_info_panel(None)),
         inputs=[temp_output_dir],
-        outputs=[pdf_input, result_download, temp_output_dir, log_output],
+        outputs=[pdf_input, result_download, temp_output_dir, log_output, file_info],
     )
 
     # ---- 历史记录事件 ----
