@@ -1947,6 +1947,7 @@ CUSTOM_CSS = """
     /* ===== 历史任务 ===== */
     .history-table { margin-bottom: 10px !important; }
     .history-table thead th { white-space: nowrap !important; }
+    .history-table tbody td { cursor: pointer !important; }
     .history-detail {
         display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;
         padding: 10px 12px; margin: 2px 0 10px;
@@ -2439,7 +2440,10 @@ with gr.Blocks(
                 history_table = gr.Dataframe(
                     headers=["文件名", "时间", "语言", "模型", "设置", "耗时", "状态"],
                     datatype=["str", "str", "str", "str", "str", "str", "str"],
-                    interactive=False,
+                    # Gradio 6 只有 interactive=True 才会向后端派发 select 事件；
+                    # 通过 static_columns 锁定全部列，保留行选择但不允许修改历史数据。
+                    interactive=True,
+                    static_columns=[0, 1, 2, 3, 4, 5, 6],
                     wrap=True,
                     row_count=8,
                     max_height=460,
