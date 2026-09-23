@@ -357,25 +357,26 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
 
     # ---- 3) 思考开关探测 ----
     default_thinks = len(_msg_reasoning((data0.get("choices") or [{}])[0].get("message"))) > 0
-    variants = [
-        ("thinking.type=disabled", {"thinking": {"type": "disabled"}}),
-        ("enable_thinking=false", {"chat_template_kwargs": {"enable_thinking": False}}),
-    ]
     supported = False
     detail = []
-    for label, extra in variants:
-        try:
-            dv, _ = _probe_chat(api_key, base_url, model, extra=extra, prompt="hi", max_tokens=400, timeout=90)
-            still_thinks = len(_msg_reasoning((dv.get("choices") or [{}])[0].get("message"))) > 0
-            if still_thinks and default_thinks:
-                detail.append(f"- `{label}`：⚠️ 请求被接受但思考未关闭")
-            else:
-                detail.append(f"- `{label}`：✅ 可关闭")
-                supported = True
-        except urllib.error.HTTPError as e:
-            detail.append(f"- `{label}`：❌ HTTP {e.code}")
-        except Exception as e:
-            detail.append(f"- `{label}`：❌ {type(e).__name__}")
+    # 仅探测翻译器实际发送的参数，避免其他参数被接受却未生效时误导用户。
+    label = "thinking.type=disabled"
+    try:
+        dv, _ = _probe_chat(
+            api_key, base_url, model,
+            extra={"thinking": {"type": "disabled"}},
+            prompt="hi", max_tokens=400, timeout=90,
+        )
+        still_thinks = bool(_msg_reasoning((dv.get("choices") or [{}])[0].get("message")))
+        if still_thinks:
+            detail.append(f"- `{label}`：⚠️ 请求被接受但思考未关闭")
+        else:
+            detail.append(f"- `{label}`：✅ 未返回思考内容")
+            supported = True
+    except urllib.error.HTTPError as e:
+        detail.append(f"- `{label}`：❌ HTTP {e.code}")
+    except Exception as e:
+        detail.append(f"- `{label}`：❌ {type(e).__name__}")
 
     if not default_thinks and not supported:
         report.append("- **思考模式**：ℹ️ 该模型默认不输出思考内容，无需关闭")
