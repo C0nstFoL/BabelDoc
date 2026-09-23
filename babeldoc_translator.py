@@ -341,7 +341,7 @@ def _msg_reasoning(message: dict) -> str:
 
 REASONING_EFFORT_LEVELS = ("low", "high", "max")
 GLM53_MODELS = {"glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"}
-REASONING_EFFORT_TEST_VERSION = 2
+REASONING_EFFORT_TEST_VERSION = 3
 
 
 def _is_glm53_model(model):
@@ -369,6 +369,7 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
     performance = "未完成"
 
     effort_supported = None
+    effort_ordered = None
 
     def finish(supported=None):
         result = "\n".join(report)
@@ -387,6 +388,7 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
         if effort_supported is not None:
             preset["reasoning_effort_supported"] = effort_supported
             preset["reasoning_effort_test_version"] = REASONING_EFFORT_TEST_VERSION
+            preset["reasoning_effort_ordered"] = effort_ordered
             if not effort_supported:
                 preset.pop("reasoning_effort", None)
         save_config(presets, active_id)
@@ -453,7 +455,8 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
             report.append("- **思考模式**：❌ 不支持关闭")
         report.extend(detail)
 
-    # 单次思考量有随机波动；对同一题目各档重复三次，再比较中位数。
+    # 单次思考量有随机波动；记录三轮中位数供参考。
+    # 档位是否可选只取决于三种请求能否完整返回，不以思考长度排序为门槛。
     if _is_glm53_model(model):
         observed = {level: [] for level in REASONING_EFFORT_LEVELS}
         observed_tokens = {level: [] for level in REASONING_EFFORT_LEVELS}
@@ -476,15 +479,17 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
             else:
                 samples, unit = observed_tokens, "推理 token"
             middle = {level: median(samples[level]) for level in REASONING_EFFORT_LEVELS}
-            effort_supported = 0 <= middle["low"] < middle["high"] < middle["max"]
+            effort_supported = True
+            effort_ordered = 0 <= middle["low"] < middle["high"] < middle["max"]
             counts = " · ".join(f"{level} {middle[level]:g}" for level in REASONING_EFFORT_LEVELS)
-            if effort_supported:
-                report.append(f"- **推理深度**：✅ 三轮测试的中位数依次增加（{unit}：{counts}），可在主界面选择；单次输出仍可能波动")
+            if effort_ordered:
+                report.append(f"- **推理深度**：✅ 三档请求均成功，可在主界面选择；三轮中位数依次增加（{unit}：{counts}）")
             else:
-                report.append(f"- **推理深度**：⚠️ 参数已接受，但三轮测试未确认档位顺序（{unit}：{counts}）；暂不开放选择")
+                report.append(f"- **推理深度**：⚠️ 三档请求均成功，可在主界面选择；三轮中位数未按档位递增（{unit}：{counts}），实际效果未确认")
         except Exception as e:
             effort_supported = False
-            report.append(f"- **推理深度**：❌ 测试失败（{type(e).__name__}: {e}），暂不开放选择")
+            effort_ordered = None
+            report.append(f"- **推理深度**：❌ 请求失败或响应不完整（{type(e).__name__}: {e}），暂不开放选择")
     return finish(supported)
 
 
@@ -2865,7 +2870,9 @@ with gr.Blocks(
             return gr.update(visible=False, interactive=False, value=None)
         if p.get("reasoning_effort_supported") and p.get("reasoning_effort_test_version") == REASONING_EFFORT_TEST_VERSION:
             level = p.get("reasoning_effort", "max")
-            return gr.update(visible=True, interactive=True, value=level, info="三轮测试中位数显示档位差异；单次结果可能波动")
+            info = ("三档请求成功；中位数依次增加" if p.get("reasoning_effort_ordered")
+                    else "三档请求成功；思考量未按档位递增，效果未确认")
+            return gr.update(visible=True, interactive=True, value=level, info=info)
         return gr.update(visible=True, interactive=False, value=None, info="先在预设管理中重新运行「🧪 模型测试」")
 
     def _persist_thinking_choice(presets, active_id, val):
@@ -3081,6 +3088,7 @@ with gr.Blocks(
                 target.pop("thinking_disabled", None)
                 target.pop("reasoning_effort_supported", None)
                 target.pop("reasoning_effort_test_version", None)
+                target.pop("reasoning_effort_ordered", None)
                 target.pop("reasoning_effort", None)
             new_id = target["id"]
             msg = "✅ 预设已更新" + ("，模型配置已变更，请重新测试" if changed else "")
