@@ -93,14 +93,31 @@ def get_preset_by_id(presets, preset_id):
 
 def _preset_choices(presets):
     """生成 gr.Dropdown / gr.Radio 的 (显示名, id) 选项列表"""
-    return [(p["name"], p["id"]) for p in presets]
+    choices = []
+    for p in presets:
+        perf = (p.get("last_model_test") or {}).get("performance")
+        label = p["name"] + (f" · {perf}" if perf else "")
+        choices.append((label, p["id"]))
+    return choices
+
+
+def _last_model_test_report(preset):
+    """显示当前预设最近一次测试；旧预设没有记录时给出提示。"""
+    test = (preset or {}).get("last_model_test") or {}
+    if not test:
+        return "ℹ️ 暂无已保存的模型测试结果"
+    return f"{test['report']}\n\n*上次测试：{test['tested_at']}*"
 
 
 def _preset_summary(preset):
     """生成主面板展示的预设摘要文本"""
     if not preset:
         return "⚠️ 尚未配置任何 LLM 预设，请点击「管理预设」创建"
-    return f"当前使用：**{preset['name']}** · {preset.get('model', '')} · {preset.get('base_url', '')}"
+    summary = f"当前使用：**{preset['name']}** · {preset.get('model', '')} · {preset.get('base_url', '')}"
+    test = preset.get("last_model_test") or {}
+    if test:
+        summary += f"\n\n上次性能测试：{test.get('performance', '测试失败')} · {test['tested_at']}"
+    return summary
 
 
 def _format_file_size(size: int) -> str:
@@ -331,15 +348,35 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
         return "⚠️ 请先填写 API Key 与 Base URL 再测试", presets
 
     report = [f"### 🧪 模型测试报告：`{model or '(未填写)'}`"]
+    performance = "未完成"
+
+    def finish(supported=None):
+        result = "\n".join(report)
+        preset = get_preset_by_id(presets, edit_id) if edit_id else None
+        # 编辑框中的配置还没保存时，不把测试结果写到原预设上。
+        if not preset or any((preset.get(key) or "").strip() != (value or "").strip()
+                             for key, value in (("api_key", api_key), ("base_url", base_url), ("model", model))):
+            return result + "\n\n> 请先保存此模型预设，再重新测试以保留结果。", presets
+        preset["last_model_test"] = {
+            "tested_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "performance": performance,
+            "report": result,
+        }
+        if supported is not None:
+            preset["thinking_supported"] = supported
+        save_config(presets, active_id)
+        return result + "\n\n> 结论已保存到该预设，刷新页面后仍可查看。", presets
 
     # ---- 1) 可行性 ----
     try:
         data0, lat0 = _probe_chat(api_key, base_url, model, prompt="hi", max_tokens=5, timeout=30)
     except urllib.error.HTTPError as e:
         hint = {401: "API Key 无效", 403: "无权限", 404: "Base URL 或模型名不正确"}.get(e.code, "")
-        return f"❌ **模型不可用**（HTTP {e.code}{'：' + hint if hint else ''}）", presets
+        report.append(f"❌ **模型不可用**（HTTP {e.code}{'：' + hint if hint else ''}）")
+        return finish()
     except Exception as e:
-        return f"❌ **模型不可用**（{type(e).__name__}: {e}）", presets
+        report.append(f"❌ **模型不可用**（{type(e).__name__}: {e}）")
+        return finish()
     report.append(f"- **可行性**：✅ 可用于翻译（连通 {lat0:.2f}s）")
 
     # ---- 2) 性能（一段真实小翻译）----
@@ -351,8 +388,10 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
         d1, lat1 = _probe_chat(api_key, base_url, model, prompt=perf_prompt, max_tokens=2000, timeout=180)
         ctok = (d1.get("usage") or {}).get("completion_tokens", 0)
         tps = ctok / lat1 if lat1 > 0 else 0
+        performance = f"{lat1:.2f}s · {tps:.0f} tok/s"
         report.append(f"- **性能**：✅ 延迟 {lat1:.2f}s · 输出 {ctok} tokens · 约 {tps:.0f} tok/s")
     except Exception as e:
+        performance = "测试失败"
         report.append(f"- **性能**：⚠️ 测试失败（{type(e).__name__}），不影响可用性")
 
     # ---- 3) 思考开关探测 ----
@@ -386,19 +425,7 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
     else:
         report.append("- **思考模式**：❌ 不支持关闭（强制思考模型，如 GLM-5.3 系）")
     report.extend(detail)
-    report.append("\n> 结论已保存到该预设，主界面「思考模式」开关将按此解锁。")
-
-    # ---- 4) 结论写入预设并持久化 ----
-    if edit_id:
-        for p in presets:
-            if p.get("id") == edit_id:
-                p["thinking_supported"] = supported
-                break
-        else:
-            presets = presets
-        save_config(presets, active_id)
-
-    return "\n".join(report), presets
+    return finish(supported)
 
 
 # ---- 历史记录 ---- #
@@ -2811,6 +2838,15 @@ with gr.Blocks(
         fn=test_model_capabilities,
         inputs=[presets_state, preset_radio, active_id_state, preset_api_key, preset_base_url, preset_model],
         outputs=[model_test_status, presets_state],
+    ).then(
+        fn=lambda presets, active_id, edit_id: (
+            gr.update(choices=_preset_choices(presets), value=edit_id),
+            gr.update(choices=_preset_choices(presets), value=active_id),
+            _preset_summary(get_preset_by_id(presets, active_id)),
+            _thinking_switch_update(get_preset_by_id(presets, active_id)),
+        ),
+        inputs=[presets_state, active_id_state, preset_radio],
+        outputs=[preset_radio, preset_select, preset_summary, thinking_switch],
     )
 
     # 打开弹窗：以“新建预设”的空表单开始
@@ -2818,6 +2854,7 @@ with gr.Blocks(
         return (
             gr.update(visible=True),
             gr.update(choices=_preset_choices(presets), value=None),
+            "",
             "",
             "",
             "",
@@ -2836,6 +2873,7 @@ with gr.Blocks(
             preset_base_url,
             preset_model,
             preset_edit_status,
+            model_test_status,
         ],
     )
 
@@ -2849,13 +2887,14 @@ with gr.Blocks(
     def load_preset_to_editor(presets, preset_id):
         p = get_preset_by_id(presets, preset_id)
         if not p:
-            return "", "", "", "", ""
+            return "", "", "", "", "", ""
         return (
             p.get("name", ""),
             p.get("api_key", ""),
             p.get("base_url", ""),
             p.get("model", ""),
             "",
+            _last_model_test_report(p),
         )
 
     preset_radio.input(
@@ -2867,6 +2906,7 @@ with gr.Blocks(
             preset_base_url,
             preset_model,
             preset_edit_status,
+            model_test_status,
         ],
     )
 
@@ -2879,6 +2919,7 @@ with gr.Blocks(
             "",
             "",
             "🆕 请填写新预设信息后点击「保存」",
+            "",
         ),
         inputs=[],
         outputs=[
@@ -2888,6 +2929,7 @@ with gr.Blocks(
             preset_base_url,
             preset_model,
             preset_edit_status,
+            model_test_status,
         ],
     )
 
@@ -2895,18 +2937,26 @@ with gr.Blocks(
     def handle_save_preset(presets, active_id, edit_id, name, api_key, base_url, model):
         name = (name or "").strip()
         if not name:
-            return presets, active_id, "⚠️ 请填写预设名称"
+            return presets, active_id, "⚠️ 请填写预设名称", gr.update(), gr.update()
         presets = list(presets)
         target = get_preset_by_id(presets, edit_id) if edit_id else None
         if target:
+            changed = any(
+                (target.get(key) or "").strip() != (value or "").strip()
+                for key, value in (("api_key", api_key), ("base_url", base_url), ("model", model))
+            )
             target.update(
                 name=name,
                 api_key=api_key or "",
                 base_url=(base_url or "").strip(),
                 model=(model or "").strip(),
             )
+            if changed:
+                target.pop("last_model_test", None)
+                target.pop("thinking_supported", None)
+                target.pop("thinking_disabled", None)
             new_id = target["id"]
-            msg = "✅ 预设已更新"
+            msg = "✅ 预设已更新" + ("，模型配置已变更，请重新测试" if changed else "")
         else:
             new_id = uuid.uuid4().hex[:8]
             presets.append(
@@ -2925,6 +2975,7 @@ with gr.Blocks(
             active_id,
             msg,
             gr.update(choices=_preset_choices(presets), value=new_id),
+            _last_model_test_report(get_preset_by_id(presets, new_id)),
         )
 
     save_preset_btn.click(
@@ -2938,7 +2989,11 @@ with gr.Blocks(
             preset_base_url,
             preset_model,
         ],
-        outputs=[presets_state, active_id_state, preset_edit_status, preset_radio],
+        outputs=[presets_state, active_id_state, preset_edit_status, preset_radio, model_test_status],
+    ).then(
+        fn=_apply_preset_ui,
+        inputs=[presets_state, active_id_state],
+        outputs=[preset_select, active_api_key, active_base_url, active_model, preset_summary, thinking_switch],
     )
 
     # 删除当前 radio 选中的预设
@@ -2961,9 +3016,13 @@ with gr.Blocks(
         inputs=[presets_state, active_id_state, preset_radio],
         outputs=[presets_state, active_id_state, preset_radio, preset_edit_status],
     ).then(
-        fn=lambda: ("", "", "", ""),
+        fn=lambda: ("", "", "", "", ""),
         inputs=[],
-        outputs=[preset_name, preset_api_key, preset_base_url, preset_model],
+        outputs=[preset_name, preset_api_key, preset_base_url, preset_model, model_test_status],
+    ).then(
+        fn=_apply_preset_ui,
+        inputs=[presets_state, active_id_state],
+        outputs=[preset_select, active_api_key, active_base_url, active_model, preset_summary, thinking_switch],
     )
 
     # 应用并关闭：将 radio 选中的预设设为当前生效预设
@@ -2980,6 +3039,7 @@ with gr.Blocks(
                 "",
                 "",
                 _preset_summary(None),
+                _thinking_switch_update(None),
             )
         if active_id != target_id:
             active_id = target_id
