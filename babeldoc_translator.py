@@ -338,17 +338,37 @@ def _msg_reasoning(message: dict) -> str:
     return message.get("reasoning_content") or message.get("reasoning") or ""
 
 
+REASONING_EFFORT_LEVELS = ("low", "high", "max")
+GLM53_MODELS = {"glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"}
+
+
+def _is_glm53_model(model):
+    return (model or "").lower().split("/")[-1] in GLM53_MODELS
+
+
+def _reasoning_size(response):
+    """优先用可见思考字数衡量档位差异；部分接口只提供 token 统计。"""
+    msg = ((response.get("choices") or [{}])[0].get("message") or {})
+    reasoning = _msg_reasoning(msg)
+    if reasoning:
+        return len(reasoning)
+    usage = response.get("usage") or {}
+    return (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
+
+
 def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, model):
-    """模型能力测试：可行性 / 性能 / 是否可关闭思考模式。
+    """模型能力测试：可行性、性能、思考开关及 GLM-5.3 推理深度。
 
     返回 (测试报告 Markdown, 更新后的 presets)。测试结论写入对应预设并持久化，
-    供主界面「思考模式」开关判断是否可调。
+    供主界面的思考模式和推理深度控件判断是否可调。
     """
     if not api_key or not base_url:
         return "⚠️ 请先填写 API Key 与 Base URL 再测试", presets
 
     report = [f"### 🧪 模型测试报告：`{model or '(未填写)'}`"]
     performance = "未完成"
+
+    effort_supported = None
 
     def finish(supported=None):
         result = "\n".join(report)
@@ -364,6 +384,8 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
         }
         if supported is not None:
             preset["thinking_supported"] = supported
+        if effort_supported is not None:
+            preset["reasoning_effort_supported"] = effort_supported
         save_config(presets, active_id)
         return result + "\n\n> 结论已保存到该预设，刷新页面后仍可查看。", presets
 
@@ -395,36 +417,63 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
         report.append(f"- **性能**：⚠️ 测试失败（{type(e).__name__}），不影响可用性")
 
     # ---- 3) 思考开关探测 ----
-    default_thinks = len(_msg_reasoning((data0.get("choices") or [{}])[0].get("message"))) > 0
     supported = False
-    detail = []
-    # 仅探测翻译器实际发送的参数，避免其他参数被接受却未生效时误导用户。
-    label = "thinking.type=disabled"
-    try:
-        dv, _ = _probe_chat(
-            api_key, base_url, model,
-            extra={"thinking": {"type": "disabled"}},
-            prompt="hi", max_tokens=400, timeout=90,
-        )
-        still_thinks = bool(_msg_reasoning((dv.get("choices") or [{}])[0].get("message")))
-        if still_thinks:
-            detail.append(f"- `{label}`：⚠️ 请求被接受但思考未关闭")
-        else:
-            detail.append(f"- `{label}`：✅ 未返回思考内容")
-            supported = True
-    except urllib.error.HTTPError as e:
-        detail.append(f"- `{label}`：❌ HTTP {e.code}")
-    except Exception as e:
-        detail.append(f"- `{label}`：❌ {type(e).__name__}")
-
-    if not default_thinks and not supported:
-        report.append("- **思考模式**：ℹ️ 该模型默认不输出思考内容，无需关闭")
-        supported = True  # 无思考可关，开关可放开（无副作用）
-    elif supported:
-        report.append("- **思考模式**：✅ 支持关闭，主界面开关已解锁")
+    if _is_glm53_model(model):
+        report.append("- **思考模式**：ℹ️ GLM-5.3 系列固定开启思考，使用推理深度调节")
     else:
-        report.append("- **思考模式**：❌ 不支持关闭（强制思考模型，如 GLM-5.3 系）")
-    report.extend(detail)
+        default_thinks = bool(_msg_reasoning((data0.get("choices") or [{}])[0].get("message")))
+        detail = []
+        label = "thinking.type=disabled"
+        try:
+            dv, _ = _probe_chat(
+                api_key, base_url, model,
+                extra={"thinking": {"type": "disabled"}},
+                prompt="hi", max_tokens=400, timeout=90,
+            )
+            still_thinks = bool(_msg_reasoning((dv.get("choices") or [{}])[0].get("message")))
+            if still_thinks:
+                detail.append(f"- `{label}`：⚠️ 请求被接受但思考未关闭")
+            else:
+                detail.append(f"- `{label}`：✅ 未返回思考内容")
+                supported = True
+        except urllib.error.HTTPError as e:
+            detail.append(f"- `{label}`：❌ HTTP {e.code}")
+        except Exception as e:
+            detail.append(f"- `{label}`：❌ {type(e).__name__}")
+
+        if not default_thinks and not supported:
+            report.append("- **思考模式**：ℹ️ 该模型默认不输出思考内容，无需关闭")
+            supported = True
+        elif supported:
+            report.append("- **思考模式**：✅ 支持关闭，主界面开关已解锁")
+        else:
+            report.append("- **思考模式**：❌ 不支持关闭")
+        report.extend(detail)
+
+    # GLM-5.3 系列只能调整推理深度。只接受参数不足以证明生效，比较同一题目
+    # 在 low/high/max 下的思考量；没有可观测差异时不解锁选择器。
+    if _is_glm53_model(model):
+        observed = {}
+        try:
+            for level in REASONING_EFFORT_LEVELS:
+                response, _ = _probe_chat(
+                    api_key, base_url, model,
+                    extra={"reasoning_effort": level},
+                    prompt=perf_prompt, max_tokens=1200, timeout=120,
+                )
+                message = ((response.get("choices") or [{}])[0].get("message") or {})
+                if not message.get("content"):
+                    raise ValueError(f"{level} 档位未返回正文")
+                observed[level] = _reasoning_size(response)
+            effort_supported = observed["max"] > observed["low"]
+            counts = " · ".join(f"{level} {observed[level]}" for level in REASONING_EFFORT_LEVELS)
+            if effort_supported:
+                report.append(f"- **推理深度**：✅ 已验证档位差异（思考量：{counts}），可在主界面选择")
+            else:
+                report.append(f"- **推理深度**：⚠️ 参数已接受，但未测到 max 高于 low（思考量：{counts}）；暂不开放选择")
+        except Exception as e:
+            effort_supported = False
+            report.append(f"- **推理深度**：❌ 测试失败（{type(e).__name__}: {e}），暂不开放选择")
     return finish(supported)
 
 
@@ -768,6 +817,26 @@ def _reset_stop():
     _running_process = None
 
 
+def _create_translation_translator(lang_in, lang_out, model, base_url, api_key, disable_thinking, reasoning_effort):
+    """构造翻译器，并把已验证的推理深度写入实际请求体。"""
+    from babeldoc.translator.translator import OpenAITranslator
+
+    translator = OpenAITranslator(
+        lang_in=lang_in,
+        lang_out=lang_out,
+        model=model,
+        base_url=base_url.rstrip("/") + "/",
+        api_key=api_key,
+        thinking="disabled" if disable_thinking else ("enabled" if reasoning_effort else None),
+    )
+    if reasoning_effort:
+        # BabelDOC 的 reasoning 参数会发送 {"reasoning": {"effort": ...}}；
+        # GLM 需要的是顶层 reasoning_effort。
+        translator.extra_body["reasoning_effort"] = reasoning_effort
+        translator.add_cache_impact_parameters("reasoning_effort", reasoning_effort)
+    return translator
+
+
 async def _translate_with_native_events(
     pdf_file: str,
     api_key: str,
@@ -780,6 +849,7 @@ async def _translate_with_native_events(
     pool_workers: int,
     output_mode: str,
     disable_thinking: bool,
+    reasoning_effort: str | None,
 ):
     """通过 BabelDOC Python API 翻译，并直接接收精确进度事件。
 
@@ -789,18 +859,13 @@ async def _translate_with_native_events(
     from babeldoc.docvision.doclayout import DocLayoutModel
     from babeldoc.format.pdf.high_level import async_translate
     from babeldoc.format.pdf.translation_config import TranslationConfig
-    from babeldoc.translator.translator import OpenAITranslator, set_translate_rate_limiter
+    from babeldoc.translator.translator import set_translate_rate_limiter
 
     _translation_loop = asyncio.get_running_loop()
     _translation_task = asyncio.current_task()
     try:
-        translator = OpenAITranslator(
-            lang_in=lang_in,
-            lang_out=lang_out,
-            model=model,
-            base_url=base_url.rstrip("/") + "/",
-            api_key=api_key,
-            thinking="disabled" if disable_thinking else None,
+        translator = _create_translation_translator(
+            lang_in, lang_out, model, base_url, api_key, disable_thinking, reasoning_effort,
         )
         set_translate_rate_limiter(qps)
         doc_layout_model = DocLayoutModel.load_onnx()
@@ -1208,7 +1273,7 @@ def _ocr_preprocess(pdf_path: str, lang_in: str, out_path: str) -> bool:
         return False
 
 
-def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_out, output_mode, speed, disable_thinking=False):
+def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_out, output_mode, speed, disable_thinking=False, reasoning_effort=None):
     """后台线程：运行 babeldoc 子进程并持续更新全局任务状态。
     该函数不依赖任何 Gradio 请求上下文，因此浏览器刷新页面不会影响它的执行。
     """
@@ -1405,7 +1470,7 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
                 "model": model,
                 "settings": (
                     f'{sp["label"]} · '
-                    + ("关闭思考" if disable_thinking else "开启思考") + " · "
+                    + (f"推理深度 {reasoning_effort}" if reasoning_effort else ("关闭思考" if disable_thinking else "开启思考")) + " · "
                     + ("双语" if output_mode == "both" else ("双语对照" if output_mode == "dual_only" else "单语"))
                 ),
                 "duration": duration,
@@ -1432,6 +1497,7 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
                 pool_workers=sp["pool"],
                 output_mode=output_mode,
                 disable_thinking=disable_thinking,
+                reasoning_effort=reasoning_effort,
             )
         )
         if _stop_event.is_set():
@@ -1654,6 +1720,7 @@ def translate_pdf(
     output_mode,
     speed,
     disable_thinking=False,
+    reasoning_effort=None,
 ):
     """启动翻译任务并轮询展示进度。
 
@@ -1661,7 +1728,11 @@ def translate_pdf(
     `_TASK` 字典里。刷新浏览器页面会取消这里的轮询循环，但后台线程不受影响，
     翻译会继续进行；刷新后可通过页面自动或手动重新接上最新进度（见 `resume_progress`）。
     """
-    disable_thinking = disable_thinking == "关闭"
+    disable_thinking = disable_thinking == "关闭" and not _is_glm53_model(model)
+    reasoning_effort = (
+        reasoning_effort if _is_glm53_model(model) and reasoning_effort in REASONING_EFFORT_LEVELS
+        else None
+    )
     if not pdf_file:
         yield None, '<div class="log-line log-error" style="font-weight:bold">⚠️ 请先上传 PDF 文件</div>', None
         return
@@ -1701,7 +1772,7 @@ def translate_pdf(
 
     worker = threading.Thread(
         target=_run_translation_worker,
-        args=(pdf_file, api_key, base_url, model, lang_in, lang_out, output_mode, speed, disable_thinking),
+        args=(pdf_file, api_key, base_url, model, lang_in, lang_out, output_mode, speed, disable_thinking, reasoning_effort),
         daemon=True,
     )
     worker.start()
@@ -2524,6 +2595,14 @@ with gr.Blocks(
                                 interactive=False,
                                 info="先在预设管理中运行「🧪 模型测试」",
                             )
+                            reasoning_effort_switch = gr.Radio(
+                                choices=[("轻量", "low"), ("增强", "high"), ("深度", "max")],
+                                value=None,
+                                label="推理深度",
+                                interactive=False,
+                                visible=False,
+                                info="先在预设管理中运行「🧪 模型测试」",
+                            )
                             config_status = gr.Markdown("")
                             # 隐藏状态：当前生效的 api_key / base_url / model，供翻译任务使用
                             active_api_key = gr.State("")
@@ -2673,7 +2752,7 @@ with gr.Blocks(
                 label="模型名称",
                 placeholder="deepseek-chat",
             )
-            model_test_btn = gr.Button("🧪 模型测试（可行性 / 性能 / 思考开关）", variant="secondary")
+            model_test_btn = gr.Button("🧪 模型测试（可行性 / 性能 / 推理设置）", variant="secondary")
             model_test_status = gr.Markdown("")
             preset_edit_status = gr.Markdown("")
             with gr.Row():
@@ -2704,6 +2783,7 @@ with gr.Blocks(
             output_mode,
             speed,
             thinking_switch,
+            reasoning_effort_switch,
         ],
         outputs=[result_download, log_output, temp_output_dir],
         api_name="translate",
@@ -2760,18 +2840,35 @@ with gr.Blocks(
     # ---- LLM 预设管理事件 ----
     def _thinking_switch_update(p):
         """根据预设的测试结论生成思考模式开关的更新"""
+        if p and _is_glm53_model(p.get("model")):
+            return gr.update(visible=False, interactive=False, value="开启")
         if p and p.get("thinking_supported"):
             val = "关闭" if p.get("thinking_disabled") else "开启"
-            return gr.update(interactive=True, value=val, info="关闭后翻译更快更省")
+            return gr.update(visible=True, interactive=True, value=val, info="关闭后翻译更快更省")
         if p and p.get("thinking_supported") is False:
-            return gr.update(interactive=False, value="开启", info="该模型不支持关闭思考")
-        return gr.update(interactive=False, value="开启", info="先在预设管理中运行「🧪 模型测试」")
+            return gr.update(visible=True, interactive=False, value="开启", info="该模型不支持关闭思考")
+        return gr.update(visible=True, interactive=False, value="开启", info="先在预设管理中运行「🧪 模型测试」")
+
+    def _reasoning_effort_update(p):
+        if not p or not _is_glm53_model(p.get("model")):
+            return gr.update(visible=False, interactive=False, value=None)
+        if p.get("reasoning_effort_supported"):
+            level = p.get("reasoning_effort", "max")
+            return gr.update(visible=True, interactive=True, value=level, info="已验证该预设的推理深度参数")
+        return gr.update(visible=True, interactive=False, value=None, info="先在预设管理中运行「🧪 模型测试」")
 
     def _persist_thinking_choice(presets, active_id, val):
         """把思考模式开关的选择写入当前生效预设并保存"""
         p = get_preset_by_id(presets, active_id)
         if p:
             p["thinking_disabled"] = val == "关闭"
+            save_config(presets, active_id)
+        return presets
+
+    def _persist_reasoning_effort(presets, active_id, val):
+        p = get_preset_by_id(presets, active_id)
+        if p and p.get("reasoning_effort_supported") and val in REASONING_EFFORT_LEVELS:
+            p["reasoning_effort"] = val
             save_config(presets, active_id)
         return presets
 
@@ -2786,6 +2883,7 @@ with gr.Blocks(
                 "",
                 _preset_summary(None),
                 _thinking_switch_update(None),
+                _reasoning_effort_update(None),
             )
         return (
             gr.update(choices=_preset_choices(presets), value=preset_id),
@@ -2794,13 +2892,20 @@ with gr.Blocks(
             p.get("model", ""),
             _preset_summary(p),
             _thinking_switch_update(p),
+            _reasoning_effort_update(p),
         )
 
-    # 主面板下拉框：切换预设立即生效
+    # 主面板下拉框：切换预设立即生效，并同步持久化当前预设 ID。
+    def _select_preset(presets, preset_id):
+        if get_preset_by_id(presets, preset_id):
+            save_config(presets, preset_id)
+            return (preset_id, *_apply_preset_ui(presets, preset_id)[1:])
+        return (None, *_apply_preset_ui(presets, None)[1:])
+
     preset_select.input(
-        fn=lambda presets, preset_id: _apply_preset_ui(presets, preset_id)[1:],
+        fn=_select_preset,
         inputs=[presets_state, preset_select],
-        outputs=[active_api_key, active_base_url, active_model, preset_summary, thinking_switch],
+        outputs=[active_id_state, active_api_key, active_base_url, active_model, preset_summary, thinking_switch, reasoning_effort_switch],
     )
 
     # 测试当前预设的 API 连通性：先立即给出提示并禁用按钮，结束后恢复
@@ -2828,10 +2933,15 @@ with gr.Blocks(
         inputs=[presets_state, active_id_state, thinking_switch],
         outputs=[presets_state],
     )
+    reasoning_effort_switch.change(
+        fn=_persist_reasoning_effort,
+        inputs=[presets_state, active_id_state, reasoning_effort_switch],
+        outputs=[presets_state],
+    )
 
     # 模型能力测试（弹窗内）：测试结论写入所选预设并持久化
     model_test_btn.click(
-        fn=lambda: "🧪 正在测试模型（连通性 / 性能 / 思考开关），请稍候...",
+        fn=lambda: "🧪 正在测试模型（连通性 / 性能 / 推理设置），请稍候...",
         inputs=[],
         outputs=[model_test_status],
     ).then(
@@ -2844,9 +2954,10 @@ with gr.Blocks(
             gr.update(choices=_preset_choices(presets), value=active_id),
             _preset_summary(get_preset_by_id(presets, active_id)),
             _thinking_switch_update(get_preset_by_id(presets, active_id)),
+            _reasoning_effort_update(get_preset_by_id(presets, active_id)),
         ),
         inputs=[presets_state, active_id_state, preset_radio],
-        outputs=[preset_radio, preset_select, preset_summary, thinking_switch],
+        outputs=[preset_radio, preset_select, preset_summary, thinking_switch, reasoning_effort_switch],
     )
 
     # 打开弹窗：以“新建预设”的空表单开始
@@ -2955,6 +3066,8 @@ with gr.Blocks(
                 target.pop("last_model_test", None)
                 target.pop("thinking_supported", None)
                 target.pop("thinking_disabled", None)
+                target.pop("reasoning_effort_supported", None)
+                target.pop("reasoning_effort", None)
             new_id = target["id"]
             msg = "✅ 预设已更新" + ("，模型配置已变更，请重新测试" if changed else "")
         else:
@@ -2993,7 +3106,7 @@ with gr.Blocks(
     ).then(
         fn=_apply_preset_ui,
         inputs=[presets_state, active_id_state],
-        outputs=[preset_select, active_api_key, active_base_url, active_model, preset_summary, thinking_switch],
+        outputs=[preset_select, active_api_key, active_base_url, active_model, preset_summary, thinking_switch, reasoning_effort_switch],
     )
 
     # 删除当前 radio 选中的预设
@@ -3022,7 +3135,7 @@ with gr.Blocks(
     ).then(
         fn=_apply_preset_ui,
         inputs=[presets_state, active_id_state],
-        outputs=[preset_select, active_api_key, active_base_url, active_model, preset_summary, thinking_switch],
+        outputs=[preset_select, active_api_key, active_base_url, active_model, preset_summary, thinking_switch, reasoning_effort_switch],
     )
 
     # 应用并关闭：将 radio 选中的预设设为当前生效预设
@@ -3040,6 +3153,7 @@ with gr.Blocks(
                 "",
                 _preset_summary(None),
                 _thinking_switch_update(None),
+                _reasoning_effort_update(None),
             )
         if active_id != target_id:
             active_id = target_id
@@ -3054,6 +3168,7 @@ with gr.Blocks(
             p.get("model", ""),
             _preset_summary(p),
             _thinking_switch_update(p),
+            _reasoning_effort_update(p),
         )
 
     apply_preset_btn.click(
@@ -3069,6 +3184,7 @@ with gr.Blocks(
             active_model,
             preset_summary,
             thinking_switch,
+            reasoning_effort_switch,
         ],
     )
 
@@ -3180,6 +3296,7 @@ with gr.Blocks(
             p.get("model", "") if p else "",
             _preset_summary(p),
             _thinking_switch_update(p),
+            _reasoning_effort_update(p),
         )
 
     demo.load(
@@ -3194,6 +3311,7 @@ with gr.Blocks(
             active_model,
             preset_summary,
             thinking_switch,
+            reasoning_effort_switch,
         ],
     )
 
