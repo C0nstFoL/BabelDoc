@@ -93,3 +93,8 @@
 - 位置：babeldoc_translator.py:597
 - 描述：历史记录表格选中后仍按 3 个值解包 `show_history_files()` 的返回值，而该函数在删除按钮状态调整后实际返回 5 个值，触发 `ValueError: too many values to unpack (expected 3)`，选中后不再加载历史记录。
 - 修复：按实际返回值完整解包原文、译文、详情、删除按钮状态和删除确认状态，并将其同步到表格选中的全部输出组件。
+
+## BUG-018 已修复（03195be）
+- 位置：babeldoc_translator.py:358
+- 描述：DeepSeek 模型测试额外探测 `enable_thinking=false`，该参数被接口接受但不关闭思考，报告产生与实际翻译无关的警告。
+- 修复：模型测试只探测实际翻译使用的 `thinking.type=disabled`，并根据响应中的思考字段报告结果。
