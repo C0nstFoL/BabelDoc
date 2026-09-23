@@ -15,6 +15,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from statistics import median
 import gradio as gr
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
@@ -340,20 +341,19 @@ def _msg_reasoning(message: dict) -> str:
 
 REASONING_EFFORT_LEVELS = ("low", "high", "max")
 GLM53_MODELS = {"glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"}
+REASONING_EFFORT_TEST_VERSION = 2
 
 
 def _is_glm53_model(model):
     return (model or "").lower().split("/")[-1] in GLM53_MODELS
 
 
-def _reasoning_size(response):
-    """优先用可见思考字数衡量档位差异；部分接口只提供 token 统计。"""
+def _reasoning_measure(response):
+    """分别提取可见思考字数和接口报告的推理 token 数。"""
     msg = ((response.get("choices") or [{}])[0].get("message") or {})
-    reasoning = _msg_reasoning(msg)
-    if reasoning:
-        return len(reasoning)
     usage = response.get("usage") or {}
-    return (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
+    tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
+    return len(_msg_reasoning(msg)), tokens
 
 
 def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, model):
@@ -386,6 +386,9 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
             preset["thinking_supported"] = supported
         if effort_supported is not None:
             preset["reasoning_effort_supported"] = effort_supported
+            preset["reasoning_effort_test_version"] = REASONING_EFFORT_TEST_VERSION
+            if not effort_supported:
+                preset.pop("reasoning_effort", None)
         save_config(presets, active_id)
         return result + "\n\n> 结论已保存到该预设，刷新页面后仍可查看。", presets
 
@@ -450,27 +453,35 @@ def test_model_capabilities(presets, edit_id, active_id, api_key, base_url, mode
             report.append("- **思考模式**：❌ 不支持关闭")
         report.extend(detail)
 
-    # GLM-5.3 系列只能调整推理深度。只接受参数不足以证明生效，比较同一题目
-    # 在 low/high/max 下的思考量；没有可观测差异时不解锁选择器。
+    # 单次思考量有随机波动；对同一题目各档重复三次，再比较中位数。
     if _is_glm53_model(model):
-        observed = {}
+        observed = {level: [] for level in REASONING_EFFORT_LEVELS}
+        observed_tokens = {level: [] for level in REASONING_EFFORT_LEVELS}
         try:
-            for level in REASONING_EFFORT_LEVELS:
-                response, _ = _probe_chat(
-                    api_key, base_url, model,
-                    extra={"reasoning_effort": level},
-                    prompt=perf_prompt, max_tokens=1200, timeout=120,
-                )
-                message = ((response.get("choices") or [{}])[0].get("message") or {})
-                if not message.get("content"):
-                    raise ValueError(f"{level} 档位未返回正文")
-                observed[level] = _reasoning_size(response)
-            effort_supported = observed["max"] > observed["low"]
-            counts = " · ".join(f"{level} {observed[level]}" for level in REASONING_EFFORT_LEVELS)
-            if effort_supported:
-                report.append(f"- **推理深度**：✅ 已验证档位差异（思考量：{counts}），可在主界面选择")
+            for _ in range(3):
+                for level in REASONING_EFFORT_LEVELS:
+                    response, _ = _probe_chat(
+                        api_key, base_url, model,
+                        extra={"reasoning_effort": level},
+                        prompt=perf_prompt, max_tokens=1200, timeout=120,
+                    )
+                    choice = (response.get("choices") or [{}])[0]
+                    if not (choice.get("message") or {}).get("content") or choice.get("finish_reason") == "length":
+                        raise ValueError(f"{level} 档位响应不完整")
+                    chars, tokens = _reasoning_measure(response)
+                    observed[level].append(chars)
+                    observed_tokens[level].append(tokens)
+            if any(size for sizes in observed.values() for size in sizes):
+                samples, unit = observed, "可见思考字符"
             else:
-                report.append(f"- **推理深度**：⚠️ 参数已接受，但未测到 max 高于 low（思考量：{counts}）；暂不开放选择")
+                samples, unit = observed_tokens, "推理 token"
+            middle = {level: median(samples[level]) for level in REASONING_EFFORT_LEVELS}
+            effort_supported = 0 <= middle["low"] < middle["high"] < middle["max"]
+            counts = " · ".join(f"{level} {middle[level]:g}" for level in REASONING_EFFORT_LEVELS)
+            if effort_supported:
+                report.append(f"- **推理深度**：✅ 三轮测试的中位数依次增加（{unit}：{counts}），可在主界面选择；单次输出仍可能波动")
+            else:
+                report.append(f"- **推理深度**：⚠️ 参数已接受，但三轮测试未确认档位顺序（{unit}：{counts}）；暂不开放选择")
         except Exception as e:
             effort_supported = False
             report.append(f"- **推理深度**：❌ 测试失败（{type(e).__name__}: {e}），暂不开放选择")
@@ -2852,10 +2863,10 @@ with gr.Blocks(
     def _reasoning_effort_update(p):
         if not p or not _is_glm53_model(p.get("model")):
             return gr.update(visible=False, interactive=False, value=None)
-        if p.get("reasoning_effort_supported"):
+        if p.get("reasoning_effort_supported") and p.get("reasoning_effort_test_version") == REASONING_EFFORT_TEST_VERSION:
             level = p.get("reasoning_effort", "max")
-            return gr.update(visible=True, interactive=True, value=level, info="已验证该预设的推理深度参数")
-        return gr.update(visible=True, interactive=False, value=None, info="先在预设管理中运行「🧪 模型测试」")
+            return gr.update(visible=True, interactive=True, value=level, info="三轮测试中位数显示档位差异；单次结果可能波动")
+        return gr.update(visible=True, interactive=False, value=None, info="先在预设管理中重新运行「🧪 模型测试」")
 
     def _persist_thinking_choice(presets, active_id, val):
         """把思考模式开关的选择写入当前生效预设并保存"""
@@ -2867,7 +2878,9 @@ with gr.Blocks(
 
     def _persist_reasoning_effort(presets, active_id, val):
         p = get_preset_by_id(presets, active_id)
-        if p and p.get("reasoning_effort_supported") and val in REASONING_EFFORT_LEVELS:
+        if (p and p.get("reasoning_effort_supported")
+                and p.get("reasoning_effort_test_version") == REASONING_EFFORT_TEST_VERSION
+                and val in REASONING_EFFORT_LEVELS):
             p["reasoning_effort"] = val
             save_config(presets, active_id)
         return presets
@@ -3067,6 +3080,7 @@ with gr.Blocks(
                 target.pop("thinking_supported", None)
                 target.pop("thinking_disabled", None)
                 target.pop("reasoning_effort_supported", None)
+                target.pop("reasoning_effort_test_version", None)
                 target.pop("reasoning_effort", None)
             new_id = target["id"]
             msg = "✅ 预设已更新" + ("，模型配置已变更，请重新测试" if changed else "")
