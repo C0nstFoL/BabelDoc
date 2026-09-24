@@ -2,12 +2,9 @@
 
 ### PDF 文档翻译，保留原文结构
 
-[![Latest Release](https://img.shields.io/github/v/release/BabelDocContributors/BabelDoc?display_name=tag&sort=semver)](https://github.com/BabelDocContributors/BabelDoc/releases/latest)
-[![License](https://img.shields.io/github/license/BabelDocContributors/BabelDoc)](https://github.com/BabelDocContributors/BabelDoc)
-
 BabelDOC 是一个面向论文、课程资料和技术文档的 PDF 翻译工具。它基于 [BabelDOC](https://github.com/funstory-ai/BabelDOC) 构建，通过 OpenAI 兼容接口完成翻译，并提供简洁的 Web 界面管理任务和结果。
 
-当前版本：**v1.0.0** · [查看发布说明](https://github.com/BabelDocContributors/BabelDoc/releases/tag/v1.0.0)
+当前版本：**v1.0.0**
 
 ## 主要功能
 
@@ -70,7 +67,7 @@ python babeldoc_translator.py
 2. 安装 Git，然后在 PowerShell 中执行：
 
 ```powershell
-git clone https://github.com/BabelDocContributors/BabelDoc.git
+git clone "<仓库地址>"
 Set-Location BabelDoc
 ```
 
@@ -85,7 +82,7 @@ New-Item -ItemType Directory -Force outputs
 
 ```dotenv
 AUTH_ENABLED=false
-OIDC_ISSUER=https://your-oidc-provider.example.com
+OIDC_ISSUER=<身份提供商地址>
 OIDC_CLIENT_ID=
 OIDC_CLIENT_SECRET=
 APP_BASE_URL=http://localhost:7865
@@ -168,7 +165,7 @@ Windows 本地运行不使用 Linux 专用的 `start.sh`。通过 `start.bat` �
 
 认证由环境变量 `AUTH_ENABLED` 控制，默认关闭。启用时需配置任意兼容 OpenID Connect 的身份提供商，并填写 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`、`APP_BASE_URL` 和 `SESSION_SECRET`。`OIDC_ISSUER` 应指向身份提供商的 issuer 地址，应用会从其标准 `.well-known/openid-configuration` 端点发现认证配置。
 
-当前线上环境使用 `OIDC_ISSUER=https://auth.example.invalid` 和 `APP_BASE_URL=https://translate.example.invalid`。身份提供商中的回调地址应为 `https://translate.example.invalid/auth/callback`；更新 `.env` 后需重新创建 Docker 容器以载入环境变量。
+身份提供商中的回调地址应设为 `${APP_BASE_URL}/auth/callback`；更新 `.env` 后需重新创建 Docker 容器以载入环境变量。实际域名只保存在未纳入 Git 的 `.env` 中。
 
 ## 故障排查
 
