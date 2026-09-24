@@ -94,3 +94,8 @@
 - 描述：GLM-5.3 / GLM-5.3-Flash / GLM-5.3-FlashX 已经改成始终开启思考，不允许关闭；只能用 reasoning_effort 调节推理深度。为支持调节推理深度的模型提供推理深度调节。
 - 提出日期：2026-09-23
 - 备注：GLM-5.3 系列提供 low/high/max 三档；模型测试对每档重复三次并展示中位数。三档请求均成功即可选择；思考量未按档位递增时提示效果未确认，但保留档位选择。翻译发送顶层 `reasoning_effort`，并按预设保存选择。
+
+## REQ-018 开发中（ae6f60d）
+- 描述：将认证域名迁移至 auth.example.invalid，翻译服务域名迁移至 translate.example.invalid。
+- 提出日期：2026-09-24
+- 备注：更新本地 OIDC issuer、应用外部地址和回调地址；代码不内置服务域名，线上回调地址为 `https://translate.example.invalid/auth/callback`。本机登录跳转验证通过，公网入口仍返回 525，见 BUG-022；待入口修复与人工审核。
