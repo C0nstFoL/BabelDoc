@@ -32,8 +32,8 @@ AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "false").strip().lower() in {
     "yes",
     "on",
 }
-# 完整外部访问地址（用于拼接 OIDC 回调地址），例如 https://translate.example.invalid
-APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://translate.example.invalid")
+# 完整外部访问地址，用于拼接 OIDC 回调地址
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "").strip()
 # 用于加密登录会话 Cookie，生产环境务必通过环境变量设置固定值，
 # 否则每次重启服务都会导致已登录用户全部掉线
 SESSION_SECRET = os.environ.get("SESSION_SECRET", base64.b64encode(os.urandom(32)).decode())
@@ -3457,10 +3457,10 @@ with gr.Blocks(
 
 if __name__ == "__main__":
     if AUTH_ENABLED:
-        if not OIDC_ISSUER or not OIDC_CLIENT_ID or not OIDC_CLIENT_SECRET:
+        if not OIDC_ISSUER or not OIDC_CLIENT_ID or not OIDC_CLIENT_SECRET or not APP_BASE_URL:
             raise SystemExit(
                 "AUTH_ENABLED=true requires OIDC_ISSUER, OIDC_CLIENT_ID, "
-                "and OIDC_CLIENT_SECRET"
+                "OIDC_CLIENT_SECRET, and APP_BASE_URL"
             )
         # 启用 OIDC 登录认证：创建独立 FastAPI app，挂载认证路由与中间件，
         # 再将 Gradio 挂载到该 app 上，最后用 uvicorn 启动

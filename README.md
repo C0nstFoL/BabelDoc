@@ -168,6 +168,8 @@ Windows 本地运行不使用 Linux 专用的 `start.sh`。通过 `start.bat` �
 
 认证由环境变量 `AUTH_ENABLED` 控制，默认关闭。启用时需配置任意兼容 OpenID Connect 的身份提供商，并填写 `OIDC_ISSUER`、`OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`、`APP_BASE_URL` 和 `SESSION_SECRET`。`OIDC_ISSUER` 应指向身份提供商的 issuer 地址，应用会从其标准 `.well-known/openid-configuration` 端点发现认证配置。
 
+当前线上环境使用 `OIDC_ISSUER=https://auth.example.invalid` 和 `APP_BASE_URL=https://translate.example.invalid`。身份提供商中的回调地址应为 `https://translate.example.invalid/auth/callback`；更新 `.env` 后需重新创建 Docker 容器以载入环境变量。
+
 ## 故障排查
 
 如果任务长时间停留在“段落翻译”：
