@@ -3,6 +3,9 @@ import re
 import json
 import html
 import asyncio
+import signal
+import queue
+from types import SimpleNamespace
 import uuid
 import base64
 import subprocess
@@ -777,8 +780,6 @@ def click_history_delete(task_id: str | None, armed_task_id: str | None):
 # ---- 停止机制 ---- #
 _stop_event = threading.Event()
 _running_process: subprocess.Popen | None = None
-_translation_loop: asyncio.AbstractEventLoop | None = None
-_translation_task: asyncio.Task | None = None
 
 # ---- 后台任务全局状态 ----
 # 翻译在独立线程中运行，状态写入这个全局字典，
@@ -809,25 +810,28 @@ _TASK: dict = {
 _task_lock = threading.Lock()
 
 
+def _signal_translation_process(proc, sig):
+    """所有翻译/OCR 子进程共享独立进程组，避免留下阻塞线程或 OCR 孤儿。"""
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
 def request_stop():
-    """请求停止翻译（由 UI 按钮调用）"""
-    _stop_event.set()
-    proc = _running_process
-    if proc is not None and proc.poll() is None:
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-    # API 模式没有 CLI 子进程；取消事件循环中的任务会让 async_translate
-    # 向 BabelDOC 的 ProgressMonitor 传递取消信号。
-    loop = _translation_loop
-    task = _translation_task
-    if loop and task and not task.done():
-        loop.call_soon_threadsafe(task.cancel)
+    """仅发送停止信号，不在 UI 回调中等待进程退出。"""
+    with _task_lock:
+        if not _TASK["running"]:
+            return
+        _stop_event.set()
+        _TASK["extra_html"] = '<div class="log-line log-warning">⏹ 正在停止翻译...</div>'
+        proc = _running_process
+    if proc is not None:
+        _signal_translation_process(proc, signal.SIGTERM)
 
 
 def _reset_stop():
-    """重置停止状态"""
+    """仅在旧任务完全退出后重置停止状态。"""
     _stop_event.clear()
     global _running_process
     _running_process = None
@@ -866,53 +870,166 @@ async def _translate_with_native_events(
     output_mode: str,
     disable_thinking: bool,
     reasoning_effort: str | None,
+    event_callback=None,
 ):
     """通过 BabelDOC Python API 翻译，并直接接收精确进度事件。
 
     这里必须保持 debug=False：BabelDOC 的 debug 会向最终 PDF 注入布局框与标记。
     """
-    global _translation_loop, _translation_task
     from babeldoc.docvision.doclayout import DocLayoutModel
     from babeldoc.format.pdf.high_level import async_translate
     from babeldoc.format.pdf.translation_config import TranslationConfig
     from babeldoc.translator.translator import set_translate_rate_limiter
 
-    _translation_loop = asyncio.get_running_loop()
-    _translation_task = asyncio.current_task()
+    translator = _create_translation_translator(
+        lang_in, lang_out, model, base_url, api_key, disable_thinking, reasoning_effort,
+    )
+    set_translate_rate_limiter(qps)
+    doc_layout_model = DocLayoutModel.load_onnx()
+    config = TranslationConfig(
+        translator=translator,
+        term_extraction_translator=translator,
+        input_file=pdf_file,
+        lang_in=lang_in,
+        lang_out=lang_out,
+        doc_layout_model=doc_layout_model,
+        output_dir=output_dir,
+        debug=False,
+        no_dual=output_mode == "mono_only",
+        no_mono=output_mode == "dual_only",
+        qps=qps,
+        pool_max_workers=pool_workers,
+        report_interval=1,
+        use_rich_pbar=False,
+        auto_enable_ocr_workaround=True,
+    )
+    getattr(doc_layout_model, "init_font_mapper", lambda _config: None)(config)
+    async for event in async_translate(config):
+        if event.get("type") in {"progress_start", "progress_update", "progress_end"}:
+            (event_callback or _record_native_progress_event)(event)
+        if event.get("type") == "error":
+            raise RuntimeError(event.get("error", "BabelDOC 翻译失败"))
+        if event.get("type") == "finish":
+            return event["translate_result"]
+    raise RuntimeError("BabelDOC 未返回翻译结果")
+
+
+_EVENT_PREFIX = "BABELDOC_EVENT:"
+_STOP_GRACE_SECONDS = 0.5
+
+
+def _translation_child_main():
+    """子进程通过 stdin 接收配置（含密钥），stdout 只输出进度协议。"""
+    protocol_output = _sys.stdout
+    _sys.stdout = _sys.stderr
+
+    def emit(event):
+        protocol_output.write(_EVENT_PREFIX + json.dumps(event, ensure_ascii=False) + "\n")
+        protocol_output.flush()
+
     try:
-        translator = _create_translation_translator(
-            lang_in, lang_out, model, base_url, api_key, disable_thinking, reasoning_effort,
-        )
-        set_translate_rate_limiter(qps)
-        doc_layout_model = DocLayoutModel.load_onnx()
-        config = TranslationConfig(
-            translator=translator,
-            term_extraction_translator=translator,
-            input_file=pdf_file,
-            lang_in=lang_in,
-            lang_out=lang_out,
-            doc_layout_model=doc_layout_model,
-            output_dir=output_dir,
-            debug=False,
-            no_dual=output_mode == "mono_only",
-            no_mono=output_mode == "dual_only",
-            qps=qps,
-            pool_max_workers=pool_workers,
-            report_interval=1,
-            use_rich_pbar=False,
-            auto_enable_ocr_workaround=True,
-        )
-        getattr(doc_layout_model, "init_font_mapper", lambda _config: None)(config)
-        async for event in async_translate(config):
-            _record_native_progress_event(event)
-            if event.get("type") == "error":
-                raise RuntimeError(event.get("error", "BabelDOC 翻译失败"))
-            if event.get("type") == "finish":
-                return event["translate_result"]
-        raise RuntimeError("BabelDOC 未返回翻译结果")
+        options = json.load(_sys.stdin)
+        pdf_file = options["pdf_file"]
+        if _pdf_needs_ocr(pdf_file):
+            emit({"type": "status", "message": "🔍 检测到扫描版 PDF，正在 OCR 识别文字（tesseract）..."})
+            ocr_dir = Path(options["output_dir"]) / "ocr"
+            ocr_dir.mkdir(parents=True, exist_ok=True)
+            ocr_input = str(ocr_dir / os.path.basename(pdf_file))
+            if _ocr_preprocess(pdf_file, options["lang_in"], ocr_input):
+                options["pdf_file"] = ocr_input
+                emit({"type": "status", "message": "✓ OCR 预处理完成"})
+            else:
+                emit({"type": "status", "message": "⚠ OCR 预处理失败，将直接尝试翻译原文件"})
+        result = asyncio.run(_translate_with_native_events(**options, event_callback=emit))
+        emit({"type": "result", "dual_pdf_path": str(result.dual_pdf_path) if result.dual_pdf_path else None,
+              "mono_pdf_path": str(result.mono_pdf_path) if result.mono_pdf_path else None})
+    except Exception as exc:
+        emit({"type": "error", "error": str(exc)})
+        raise SystemExit(1)
+
+
+def _run_isolated_translation(options):
+    """监督进程，停止超过半秒仍未退出时强制结束整个进程组。"""
+    global _running_process
+    if _stop_event.is_set():
+        raise asyncio.CancelledError()
+    proc = subprocess.Popen(
+        [_sys.executable, str(Path(__file__).resolve()), "--translation-worker"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+        start_new_session=True,
+    )
+    with _task_lock:
+        _running_process = proc
+    events = queue.Queue()
+
+    def read_events():
+        try:
+            for line in proc.stdout:
+                if line.startswith(_EVENT_PREFIX):
+                    events.put(json.loads(line[len(_EVENT_PREFIX):]))
+        except Exception as exc:
+            events.put({"type": "error", "error": str(exc)})
+        finally:
+            events.put(None)
+
+    reader = threading.Thread(target=read_events, daemon=True)
+    reader.start()
+    result = None
+    error = None
+    stop_started = None
+    stream_closed = False
+    try:
+        # 密钥不进入命令行参数、临时文件或日志。
+        try:
+            json.dump(options, proc.stdin)
+            proc.stdin.close()
+        except BrokenPipeError:
+            if not _stop_event.is_set():
+                raise
+        while True:
+            if _stop_event.is_set():
+                if stop_started is None:
+                    stop_started = time.monotonic()
+                    _signal_translation_process(proc, signal.SIGTERM)
+                if proc.poll() is not None or time.monotonic() - stop_started >= _STOP_GRACE_SECONDS:
+                    _signal_translation_process(proc, signal.SIGKILL)
+                    proc.wait()
+                    raise asyncio.CancelledError()
+            try:
+                event = events.get(timeout=0.1)
+            except queue.Empty:
+                if proc.poll() is not None and stream_closed:
+                    break
+                continue
+            if event is None:
+                stream_closed = True
+                if proc.poll() is not None:
+                    break
+                continue
+            if event["type"] == "result":
+                result = SimpleNamespace(**event)
+            elif event["type"] == "error":
+                error = event.get("error", "BabelDOC 翻译失败")
+            elif event["type"] == "status":
+                _task_add_status('<div class="log-line log-info">' + html.escape(event["message"]) + '</div>')
+            else:
+                _record_native_progress_event(event)
+        if _stop_event.is_set():
+            raise asyncio.CancelledError()
+        if proc.returncode != 0 or result is None:
+            raise RuntimeError(error or f"翻译进程异常退出 (exit code: {proc.returncode})")
+        return result
     finally:
-        _translation_task = None
-        _translation_loop = None
+        # 同时回收 OCR、BabelDOC 派生的子进程；确认退出后才允许启动新任务。
+        _signal_translation_process(proc, signal.SIGKILL)
+        proc.wait()
+        if not proc.stdin.closed:
+            proc.stdin.close()
+        reader.join(timeout=1)
+        proc.stdout.close()
+        with _task_lock:
+            if _running_process is proc:
+                _running_process = None
 
 
 # ---- 日志与进度 ---- #
@@ -993,6 +1110,7 @@ def _record_native_progress_event(event: dict) -> None:
     previous_stage = None
     stage_start = 0.0
     with _task_lock:
+        _TASK["last_activity"] = time.time()
         previous_stage = _TASK["current_stage"]
         stage_start = _TASK["stage_start"]
         _TASK["progress_is_native"] = True
@@ -1290,12 +1408,9 @@ def _ocr_preprocess(pdf_path: str, lang_in: str, out_path: str) -> bool:
 
 
 def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_out, output_mode, speed, disable_thinking=False, reasoning_effort=None):
-    """后台线程：运行 babeldoc 子进程并持续更新全局任务状态。
+    """后台线程：监督独立翻译进程并持续更新全局任务状态。
     该函数不依赖任何 Gradio 请求上下文，因此浏览器刷新页面不会影响它的执行。
     """
-    global _running_process
-    _error_warn_count: dict[str, int] = {}
-
     task_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
     task_dir = HISTORY_DIR / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
@@ -1304,106 +1419,6 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
         shutil.copy2(pdf_file, original_file)
     except Exception:
         original_file = None
-
-    # 扫描版 PDF 预处理：纯图片页无文本层，babeldoc 会抛 ScannedPDFError 且无输出，
-    # 先用 ocrmypdf/tesseract 添加 OCR 文字层再交给 babeldoc
-    ocr_dir = task_dir / "ocr"
-    ocr_input_file = None
-    if _pdf_needs_ocr(pdf_file):
-        if _stop_event.is_set():
-            return
-        _task_add_status(
-            '<div class="log-line log-info">🔍 检测到扫描版 PDF，正在 OCR 识别文字（tesseract）...</div>'
-        )
-        ocr_dir.mkdir(parents=True, exist_ok=True)
-        ocr_input_file = str(ocr_dir / os.path.basename(pdf_file))
-        if _ocr_preprocess(pdf_file, lang_in, ocr_input_file):
-            pdf_file = ocr_input_file
-            _task_add_status(
-                '<div class="log-line log-info">&#10003; OCR 预处理完成</div>'
-            )
-        else:
-            ocr_input_file = None
-            _task_add_status(
-                '<div class="log-line log-warning">⚠ OCR 预处理失败，将直接尝试翻译原文件</div>'
-            )
-        if _stop_event.is_set():
-            return
-
-    def _handle_log_line(parsed: tuple[str, str, str], raw_stage: str | None) -> None:
-        """处理一条解析后的日志：WARNING/ERROR→终端, INFO→web UI"""
-        ts, level, msg = parsed
-        stage = raw_stage or _detect_stage_from_msg(msg)
-
-        if level in ("WARNING", "ERROR"):
-            tag = "⚠️ " if level == "WARNING" else "❌ "
-            print(f"{tag}{ts} {msg}", file=_sys.stderr)
-            key = msg[:60]
-            _error_warn_count[key] = _error_warn_count.get(key, 0) + 1
-            with _task_lock:
-                _TASK["warning_count"] += 1
-                _TASK["last_warning"] = msg
-            return
-
-        # ---- INFO 级别 ----
-        if stage:
-            with _task_lock:
-                completed_stages = _TASK["completed_stages"]
-                current_stage = _TASK["current_stage"]
-                stage_start = _TASK["stage_start"]
-            if stage not in completed_stages and stage != current_stage:
-                if current_stage and current_stage not in completed_stages:
-                    elapsed = time.time() - stage_start
-                    em, es = divmod(int(elapsed), 60)
-                    duration = f"({em}m{es}s)" if em > 0 else f"({es}s)"
-                    for name, _, label in STAGE_WEIGHTS:
-                        if name == current_stage:
-                            _task_add_status(
-                                '<div class="log-line stage-done">'
-                                f"&#10003; {label} 完成 "
-                                f'<span class="stage-duration">{duration}</span></div>'
-                            )
-                            break
-                    with _task_lock:
-                        _TASK["completed_stages"].append(current_stage)
-                new_stage_start = time.time()
-                with _task_lock:
-                    _TASK["stage_start"] = new_stage_start
-                    _TASK["active_serial"] += 1
-                    _TASK["current_stage"] = stage
-                for name, _, label in STAGE_WEIGHTS:
-                    if name == stage:
-                        _task_add_status(
-                            '<div class="log-line stage-start">'
-                            f'<span class="spinner"></span> 正在{label}...</div>'
-                        )
-                        break
-            with _task_lock:
-                if not _TASK["progress_is_native"]:
-                    _TASK["progress_percent"] = _fallback_progress(
-                        _TASK["completed_stages"], _TASK["current_stage"]
-                    )
-
-        _maybe_show_progress_info(msg)
-
-    def _maybe_show_progress_info(msg: str) -> None:
-        """精选部分 INFO 消息显示到 web UI"""
-        show_patterns = [
-            (r"start to translate", "&#128640; 开始翻译文档..."),
-            (r"start merge results", "&#128300; 合并翻译结果..."),
-            (r"finish merge results", "&#10003; 结果合并完成"),
-            (r"Translation completed", "&#10003; 翻译段落处理完毕"),
-            (r"Peak memory usage", None),  # None = 直接用 msg
-            (r"Processing (.+)", None),
-            (r"split points determined", None),
-            (r"Only one part", "&#128196; 单文件模式，直接翻译"),
-        ]
-        for pattern, replacement in show_patterns:
-            m = re.search(pattern, msg, re.IGNORECASE)
-            if m:
-                text = replacement if replacement else msg
-                _task_add_status(f'<div class="log-line log-info">{text}</div>')
-                return
 
     # 速度等级 → 参数映射
     speed_map = {
@@ -1417,33 +1432,6 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
     with _task_lock:
         _TASK["output_dir"] = output_dir
         _TASK["task_id"] = task_id
-
-    cmd = [
-        "babeldoc",
-        "--files", pdf_file,
-        "--openai",
-        "--openai-model", model,
-        "--openai-base-url", base_url.rstrip("/") + "/",
-        "--openai-api-key", api_key,
-        "--lang-in", lang_in,
-        "--lang-out", lang_out,
-        "--output", output_dir,
-        "--report-interval", "1",
-        "--qps", str(sp["qps"]),
-        "--pool-max-workers", str(sp["pool"]),
-        # 扫描版 PDF（>80% 扫描页）默认会抛 ScannedPDFError 直接退出且无输出；
-        # 开启后自动启用 OCR workaround（白色底块 + 黑字覆盖），有隐藏文字层的扫描件可正常翻译
-        "--auto-enable-ocr-workaround",
-    ]
-    if disable_thinking:
-        cmd.extend(["--openai-thinking", "disabled"])
-    if sp["no_glossary"]:
-        cmd.append("--no-auto-extract-glossary")
-    # 输出模式：UI 传英文值（both/dual_only/mono_only）
-    if output_mode == "mono_only":
-        cmd.append("--no-dual")
-    elif output_mode == "dual_only":
-        cmd.append("--no-mono")
 
     _task_add_status(
         '<div class="log-line log-info"><b>&#128196; 文件:</b> '
@@ -1500,22 +1488,12 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
     # 直接消费 BabelDOC API 的进度事件。此前的 CLI 方案需 --debug 才能读到
     # overall_progress，进而会把调试框绘制到最终 PDF；API 方案不需要该开关。
     try:
-        result = asyncio.run(
-            _translate_with_native_events(
-                pdf_file=pdf_file,
-                api_key=api_key,
-                base_url=base_url,
-                model=model,
-                lang_in=lang_in,
-                lang_out=lang_out,
-                output_dir=output_dir,
-                qps=sp["qps"],
-                pool_workers=sp["pool"],
-                output_mode=output_mode,
-                disable_thinking=disable_thinking,
-                reasoning_effort=reasoning_effort,
-            )
-        )
+        result = _run_isolated_translation(dict(
+            pdf_file=pdf_file, api_key=api_key, base_url=base_url, model=model,
+            lang_in=lang_in, lang_out=lang_out, output_dir=output_dir,
+            qps=sp["qps"], pool_workers=sp["pool"], output_mode=output_mode,
+            disable_thinking=disable_thinking, reasoning_effort=reasoning_effort,
+        ))
         if _stop_event.is_set():
             _finish(
                 '<div class="log-line log-warning" style="font-weight:bold">&#9209; 翻译已停止</div>',
@@ -1567,163 +1545,6 @@ def _run_translation_worker(pdf_file, api_key, base_url, model, lang_in, lang_ou
         )
         return
 
-    try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        _running_process = process
-
-        log_buffer = ""
-        for line in process.stdout:
-            if _stop_event.is_set():
-                try:
-                    process.terminate()
-                except Exception:
-                    pass
-                break
-
-            raw = line.rstrip()
-            if not raw:
-                continue
-            _record_native_progress(raw)
-            with _task_lock:
-                _TASK["last_activity"] = time.time()
-
-            if raw.startswith(" ") or raw.startswith("\t") or not raw.startswith("["):
-                log_buffer += " " + raw.strip()
-            else:
-                if log_buffer:
-                    raw_stage = _detect_stage_from_raw(log_buffer)
-                    parsed = _parse_log(log_buffer)
-                    if parsed:
-                        _handle_log_line(parsed, raw_stage)
-                    elif not _record_native_progress(log_buffer):
-                        print(log_buffer, file=_sys.stderr)
-                log_buffer = raw
-
-        if log_buffer:
-            raw_stage = _detect_stage_from_raw(log_buffer)
-            parsed = _parse_log(log_buffer)
-            if parsed:
-                _handle_log_line(parsed, raw_stage)
-            elif not _record_native_progress(log_buffer):
-                print(log_buffer, file=_sys.stderr)
-
-        if _stop_event.is_set():
-            _finish(
-                '<div class="log-line log-warning" style="font-weight:bold">'
-                "&#9209; 翻译已停止</div>",
-                status="已停止",
-            )
-            return
-
-        process.wait()
-
-        if _stop_event.is_set():
-            _finish(
-                '<div class="log-line log-warning" style="font-weight:bold">'
-                "&#9209; 翻译已停止</div>",
-                status="已停止",
-            )
-            return
-
-        if process.returncode != 0:
-            _finish(
-                '<div class="log-line log-error" style="font-weight:bold">'
-                f"&#10060; 翻译失败 (exit code: {process.returncode})</div>",
-                status="失败",
-            )
-            return
-
-        # 标记所有阶段完成
-        with _task_lock:
-            current_stage = _TASK["current_stage"]
-            completed_stages = _TASK["completed_stages"]
-            stage_start = _TASK["stage_start"]
-            overall_start = _TASK["overall_start"]
-        if current_stage and current_stage not in completed_stages:
-            elapsed = time.time() - stage_start
-            em, es = divmod(int(elapsed), 60)
-            duration = f"({em}m{es}s)" if em > 0 else f"({es}s)"
-            for name, _, label in STAGE_WEIGHTS:
-                if name == current_stage:
-                    _task_add_status(
-                        '<div class="log-line stage-done">'
-                        f"&#10003; {label} 完成 "
-                        f'<span class="stage-duration">{duration}</span></div>'
-                    )
-                    break
-        with _task_lock:
-            _TASK["current_stage"] = None
-            _TASK["completed_stages"] = [name for name, _, _ in STAGE_WEIGHTS]
-            _TASK["progress_percent"] = 100.0
-
-        output_files = []
-        for ext in ["*.pdf", "*.PDF"]:
-            output_files.extend(glob.glob(os.path.join(output_dir, ext)))
-        if not output_files:
-            for root, dirs, files in os.walk(output_dir):
-                for f in files:
-                    if f.lower().endswith(".pdf"):
-                        output_files.append(os.path.join(root, f))
-        if original_file:
-            output_files = [f for f in output_files if os.path.abspath(f) != os.path.abspath(original_file)]
-        # 排除 OCR 预处理的中间输入文件
-        if ocr_input_file:
-            output_files = [f for f in output_files if os.path.abspath(f) != os.path.abspath(ocr_input_file)]
-        # --debug 为获取精确进度生成的 .decompressed.pdf 仅供排障，不能混入下载结果。
-        output_files = [f for f in output_files if _is_downloadable_result_pdf(f)]
-
-        if output_files:
-            total_elapsed = time.time() - overall_start
-            tm, ts = divmod(int(total_elapsed), 60)
-            total_duration = f"{tm}m{ts}s" if tm > 0 else f"{ts}s"
-            extra = (
-                '<div class="log-line log-success">'
-                f"&#10004; 翻译完成！(总用时 {total_duration})</div>"
-                '<div class="log-line log-info" style="margin-top:4px">输出文件:</div>'
-                + "".join(
-                    '<div class="log-line log-info" style="padding-left:12px;font-size:12px">'
-                    f"&#128196; {os.path.basename(f)}</div>"
-                    for f in output_files
-                )
-            )
-            result_file = None
-            for f in output_files:
-                if "dual" in f.lower() or "bilingual" in f.lower():
-                    result_file = f
-                    break
-            if not result_file:
-                result_file = output_files[0]
-            # 保存全部输出文件（dual + mono 等），供 UI 多文件下载
-            with _task_lock:
-                _TASK["result_files"] = output_files
-            _finish(extra, result_file, output_files=output_files)
-        else:
-            _finish(
-                '<div class="log-line log-error" style="font-weight:bold">'
-                "&#9888; 未找到输出 PDF 文件，请检查日志。</div>",
-                status="失败",
-            )
-
-    except FileNotFoundError:
-        _finish(
-            '<div class="log-line log-error" style="font-weight:bold">'
-            "&#10060; 未找到 babeldoc 命令，请确保已正确安装 BabelDOC</div>"
-            '<div class="log-line log-plain" style="font-size:12px">'
-            "安装命令: pip install babeldoc</div>",
-            status="失败",
-        )
-    except Exception as e:
-        _finish(
-            '<div class="log-line log-error" style="font-weight:bold">'
-            f"&#10060; 错误: {e}</div>",
-            status="失败",
-        )
 
 
 def translate_pdf(
@@ -2494,6 +2315,12 @@ CUSTOM_CSS = """
 
 
 # 创建 Gradio 界面
+# 翻译子进程不构建 Web UI，也不启动 HTTP 服务。
+if __name__ == "__main__" and _sys.argv[1:] == ["--translation-worker"]:
+    _translation_child_main()
+    raise SystemExit(0)
+
+
 with gr.Blocks(
     title="BabelDOC 论文翻译 - LLM",
     theme=gr.themes.Soft(),
@@ -2779,9 +2606,7 @@ with gr.Blocks(
                 close_preset_modal_btn = gr.Button("✖️ 关闭", scale=1)
 
     # 事件绑定
-    # 注意：cancels 需要指向真正承载长耗时任务（translate_pdf/resume_progress）的
-    # 事件对象本身，因此按钮 loading 态的切换放在 .then() 链的前后，
-    # 而 translate_event/resume_event 变量始终绑定在核心任务事件上。
+    # 开始和恢复按钮在任务轮询结束后恢复可用；停止时保留轮询以显示最终状态。
     translate_btn.click(
         fn=lambda: gr.update(value="⏳ 翻译中...", interactive=False),
         inputs=[],
@@ -2828,16 +2653,12 @@ with gr.Blocks(
         outputs=[translate_btn],
     )
 
-    # 停止按钮：杀死子进程 + 取消 Gradio 事件（补充取消恢复进度的轮询）
+    # 停止回调绕过队列；保留进度轮询，直到后台确认进程已退出。
     stop_btn.click(
         fn=lambda: (request_stop(), "⏹ 已请求停止")[1],
         inputs=[],
         outputs=[config_status],
-        cancels=[translate_event, resume_event],
-    ).then(
-        fn=lambda: gr.update(value="🚀 开始翻译", interactive=True),
-        inputs=[],
-        outputs=[translate_btn],
+        queue=False,
     )
 
     file_info_inputs = [pdf_input, lang_in, lang_out, output_mode, speed]
