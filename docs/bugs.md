@@ -124,8 +124,8 @@
 - 修复：通过 stdin 传递任务配置，在独立进程组运行 BabelDOC API 和 OCR，保留原生进度事件；停止回调使用 queue=False，后台以 0.1 秒间隔检查停止信号，终止超过 0.5 秒则强制结束整个进程组并回收主进程。保留进度轮询，确认退出后展示已停止并保存历史，移除不再执行的旧 CLI 路径。
 - 验证：容器内 7 项回归通过，忽略 SIGTERM 的阻塞翻译与 OCR 进程组实测约 0.61 秒停止；回归覆盖忽略 SIGTERM 的翻译进程与 OCR 子进程、启动期间停止、停止后重新启动、正常进度/结果、错误传播和停止历史记录；真实卡死模型请求的浏览器操作待人工验收。
 
-## BUG-024 已修复
+## BUG-024 已修复（e37697d）
 - 位置：requirements.txt、constraints.txt、Dockerfile
 - 描述：依赖使用范围版本，重建镜像自动安装 bitstring 5.0.0；BabelDOC 0.6.4 的 PDF 创建模块仍导入 BitStream，触发 cannot import name 'BitStream'，翻译无法启动。pip check 不会发现此类 API 不兼容。
 - 修复：bitstring 固定为 4.3.1；直接依赖全部固定版本，并通过 constraints.txt 锁定当前 Python 3.13 / Linux 部署的传递依赖。Docker 同时复制约束文件，安装后执行 pip check、BitStream 读操作以及 BabelDOC 翻译模块与 OCR 导入检查，防止不兼容镜像发布。
-- 验证：独立容器中复现 5.0.0 的导入失败；降级后 BitStream 读操作、BabelDOC 翻译模块与 OCR 导入、pip check 均通过，现有 7 项翻译进程回归通过。完整 PDF 翻译待人工验收。
+- 验证：独立容器中复现 5.0.0 的导入失败；降级后 BitStream 读操作、BabelDOC 翻译模块与 OCR 导入、pip check 均通过，现有 7 项翻译进程回归通过。Docker 全新构建及重新部署完成，运行容器 bitstring 为 4.3.1，已安装依赖全部匹配约束，本机入口返回 HTTP 307 认证跳转。完整 PDF 翻译待人工验收。
