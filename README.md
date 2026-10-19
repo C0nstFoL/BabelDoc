@@ -4,7 +4,7 @@
 
 BabelDOC 是一个面向论文、课程资料和技术文档的 PDF 翻译工具。它基于 [BabelDOC](https://github.com/funstory-ai/BabelDOC) 构建，通过 OpenAI 兼容接口完成翻译，并提供简洁的 Web 界面管理任务和结果。
 
-当前版本：**v1.0.0**
+当前版本：**release1.0.1**
 
 ## 主要功能
 
