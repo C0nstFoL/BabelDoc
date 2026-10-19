@@ -45,10 +45,12 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
 WORKDIR /app
 
 # 先复制依赖文件（利用 Docker 缓存）
-COPY requirements.txt .
+COPY requirements.txt constraints.txt ./
 
 # 安装 Python 依赖
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip check \
+    && python -c "from bitstring import BitStream; assert BitStream('0xff').read('uint:8') == 255; from babeldoc.format.pdf.high_level import async_translate; import ocrmypdf"
 
 # 复制应用代码
 COPY babeldoc_translator.py .

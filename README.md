@@ -36,12 +36,16 @@ docker compose up -d --build
 docker compose restart babeldoc
 ```
 
-修改 `Dockerfile` 或 `requirements.txt` 后，请重新构建镜像：
+修改 `Dockerfile`、`requirements.txt` 或 `constraints.txt` 后，请重新构建镜像：
 
 ```bash
 docker compose build babeldoc
 docker compose up -d --force-recreate
 ```
+
+Python 直接依赖在 `requirements.txt` 中固定版本，传递依赖在 `constraints.txt` 中固定为 Python 3.13 / Linux Docker 环境验证的版本。`bitstring` 固定为 `4.3.1`，避免 `5.0.0` 缺少 `BitStream` 导致翻译失败。安装时请使用 `pip install -r requirements.txt`，不要单独升级依赖；其他 Python 版本或平台新增的专属依赖不在此快照的完整验证范围内。
+
+更新依赖时应有意修改对应版本，在独立环境验证后更新约束快照，并重新构建镜像。构建会执行 `pip check` 以及 BitStream、BabelDOC 翻译模块和 OCR 导入检查；依赖冲突或导入不兼容时构建失败。
 
 ### 本地运行
 
