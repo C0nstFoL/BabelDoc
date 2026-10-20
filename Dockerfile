@@ -54,6 +54,8 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 # 复制应用代码
 COPY babeldoc_translator.py .
+COPY babeldoc_app/ ./babeldoc_app/
+RUN python -c "from babeldoc_app.server import create_app; from babeldoc_app.engine import _translation_child_main"
 
 # 创建历史任务输出目录（配置文件与历史记录通过 volume 挂载持久化，不在镜像中复制）
 RUN mkdir -p /app/outputs

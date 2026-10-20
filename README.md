@@ -8,6 +8,8 @@ BabelDOC 是一个面向论文、课程资料和技术文档的 PDF 翻译工具
 
 开发与发布流程见[私有开发与公开版本发布](docs/development-workflow.md)。
 
+应用按职责拆分在 `babeldoc_app/` 中，入口脚本仅负责启动；模块职责、依赖边界和回归命令见[代码结构](docs/architecture.md)。
+
 ## 主要功能
 
 - **双语与纯译文输出**：同时生成双语对照版（Dual）和纯译文版（Mono）。

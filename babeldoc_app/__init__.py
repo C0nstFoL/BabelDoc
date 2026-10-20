@@ -1,0 +1,1 @@
+"""BabelDOC translation web application."""
