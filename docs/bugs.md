@@ -129,3 +129,9 @@
 - 描述：依赖使用范围版本，重建镜像自动安装 bitstring 5.0.0；BabelDOC 0.6.4 的 PDF 创建模块仍导入 BitStream，触发 cannot import name 'BitStream'，翻译无法启动。pip check 不会发现此类 API 不兼容。
 - 修复：bitstring 固定为 4.3.1；直接依赖全部固定版本，并通过 constraints.txt 锁定当前 Python 3.13 / Linux 部署的传递依赖。Docker 同时复制约束文件，安装后执行 pip check、BitStream 读操作以及 BabelDOC 翻译模块与 OCR 导入检查，防止不兼容镜像发布。
 - 验证：独立容器中复现 5.0.0 的导入失败；降级后 BitStream 读操作、BabelDOC 翻译模块与 OCR 导入、pip check 均通过，现有 7 项翻译进程回归通过。Docker 全新构建及重新部署完成，运行容器 bitstring 为 4.3.1，已安装依赖全部匹配约束，本机入口返回 HTTP 307 认证跳转。完整 PDF 翻译待人工验收。
+
+## BUG-025 已修复
+- 位置：私有 Git 仓库 main 分支首次同步
+- 描述：新建远端已有一条仅含 README 的独立初始化提交，与本地项目历史无共同祖先，普通首次推送无法快进；该初始化提交包含非匿名作者，直接合并会将其带入后续公开版本历史。
+- 修复：先在本机 Git 私有目录创建并验证初始化提交的完整 bundle 备份，经用户明确授权，使用绑定已确认远端提交编号的 force-with-lease 替换私有 main，保留本地项目全部祖先提交；配置默认跟踪 origin/main。
+- 验证：完整待推送历史隐私检查通过，远端返回 forced update 成功；GitHub 未推送，禅道关联仍待单独验收。
