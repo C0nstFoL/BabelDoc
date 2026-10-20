@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+# GitHub publication is explicit; ordinary pushes belong to the private remote.
+case "$1 $2" in
+  *github*)
+    if [ "${BABELDOC_PUBLISH:-}" != 1 ]; then
+      echo 'GitHub publication requires BABELDOC_PUBLISH=1; see docs/development-workflow.md.' >&2
+      exit 1
+    fi
+    ;;
+esac
+
+root=$(git rev-parse --show-toplevel)
+while read -r local_ref local_oid remote_ref remote_oid; do
+  case "$local_oid" in
+    *[!0]*) python3 "$root/scripts/check_git_privacy.py" "$local_oid" ;;
+  esac
+done
