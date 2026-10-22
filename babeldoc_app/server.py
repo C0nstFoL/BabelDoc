@@ -4,6 +4,7 @@ import os
 import sys
 
 from . import settings
+from .runtime import require_runtime
 
 
 def _validate_auth_settings():
@@ -24,6 +25,7 @@ def _validate_auth_settings():
 def create_app():
     """Create an ASGI app, with session protection when OIDC is enabled."""
     _validate_auth_settings()
+    require_runtime()
     import gradio as gr
     from fastapi import FastAPI
 
@@ -60,6 +62,7 @@ def create_app():
 def main():
     """Keep both authenticated and standalone startup behavior."""
     _validate_auth_settings()
+    require_runtime()
     if settings.AUTH_ENABLED:
         import uvicorn
 

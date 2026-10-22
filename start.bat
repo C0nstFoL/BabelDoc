@@ -46,21 +46,6 @@ if "%DEPLOY_EXIT%"=="0" echo Open http://localhost:%PORT% in your browser.
 pause
 exit /b %DEPLOY_EXIT%
 
-:find_python
-if exist "%ROOT_DIR%\.venv\Scripts\python.exe" (
-    "%ROOT_DIR%\.venv\Scripts\python.exe" -c "import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) else 1)" >nul 2>&1
-    if errorlevel 1 (
-        echo [INFO] Existing virtual environment uses an unsupported Python version. Recreating it...
-        rmdir /s /q "%ROOT_DIR%\.venv"
-    ) else (
-        set "PYTHON=%ROOT_DIR%\.venv\Scripts\python.exe"
-        set "PYTHON_ARGS="
-        exit /b 0
-    )
-)
-call :find_compatible_python
-exit /b %errorlevel%
-
 :ensure_venv
 if exist "%ROOT_DIR%\.venv\Scripts\python.exe" (
     "%ROOT_DIR%\.venv\Scripts\python.exe" -c "import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] <= (3, 13) else 1)" >nul 2>&1
@@ -126,17 +111,30 @@ if not errorlevel 1 (
     echo [INFO] %APP_NAME% is already running. PID: %APP_PID%
     exit /b 0
 )
-call :find_python
+call :ensure_venv
 if errorlevel 1 exit /b 1
+set "PYTHON=%ROOT_DIR%\.venv\Scripts\python.exe"
+set "PYTHON_ARGS="
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
-"%PYTHON%" %PYTHON_ARGS% -c "import gradio, babeldoc, authlib, ocrmypdf" >nul 2>&1
+set "GRADIO_ANALYTICS_ENABLED=False"
+"%PYTHON%" %PYTHON_ARGS% -c "from babeldoc_app.runtime import require_runtime; require_runtime()"
 if errorlevel 1 (
-    echo [INFO] Installing Python dependencies...
-    "%PYTHON%" %PYTHON_ARGS% -m pip install -r requirements.txt
+    echo [INFO] Repairing Python dependencies to the pinned project versions...
+    "%PYTHON%" %PYTHON_ARGS% -m pip install --upgrade -r "%ROOT_DIR%\requirements.txt"
     if errorlevel 1 (
         echo [ERROR] Failed to install Python dependencies.
         exit /b 1
     )
+)
+"%PYTHON%" %PYTHON_ARGS% -m pip check
+if errorlevel 1 (
+    echo [ERROR] Dependency conflicts detected. Check the pip output above.
+    exit /b 1
+)
+"%PYTHON%" %PYTHON_ARGS% -m babeldoc_app.runtime
+if errorlevel 1 (
+    echo [ERROR] Runtime validation failed. The service was not started.
+    exit /b 1
 )
 set "BABELDOC_ROOT=%ROOT_DIR%"
 set "BABELDOC_APP=%APP_FILE%"

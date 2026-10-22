@@ -17,6 +17,7 @@
 | [tasks.py](../babeldoc_app/tasks.py) | 后台任务生命周期、结果入库与浏览器进度轮询 |
 | [auth.py](../babeldoc_app/auth.py) | OIDC 路由、会话与认证中间件 |
 | [server.py](../babeldoc_app/server.py) | ASGI 应用创建和 HTTP 服务启动 |
+| [runtime.py](../babeldoc_app/runtime.py) | 固定依赖版本检查，以及部署前翻译/OCR API 和实际界面构建验证 |
 | [ui/](../babeldoc_app/ui/) | 页面布局、具名组件容器、预设回调及各区域事件注册 |
 | [assets/](../babeldoc_app/assets/) | CSS、历史整行选择及主题 JavaScript |
 

@@ -133,7 +133,7 @@ python -m pip install -r requirements.txt
 start.bat
 ```
 
-也可以直接双击 `start.bat`。脚本会自动选择受支持的 Python 版本、创建虚拟环境、安装依赖并启动服务。
+也可以直接双击 `start.bat`。脚本始终使用项目的 `.venv`，检查直接依赖是否匹配 `requirements.txt` 的固定版本；发现缺失或旧版本时自动安装修复，再执行 `pip check`、翻译/OCR 导入和实际界面构建检查，通过后才启动服务。
 
 查看状态、日志、重启和停止：
 
@@ -176,6 +176,29 @@ Windows 本地运行不使用 Linux 专用的 `start.sh`。通过 `start.bat` �
 身份提供商中的回调地址应设为 `${APP_BASE_URL}/auth/callback`；更新 `.env` 后需重新创建 Docker 容器以载入环境变量。实际域名只保存在未纳入 Git 的 `.env` 中。
 
 ## 故障排查
+
+### Windows 启动时提示 Gradio 4.44 / Dataframe 参数不兼容
+
+当前界面要求 `gradio==6.30.0`，历史表格使用的 `static_columns`、`show_search`、`pinned_columns` 等参数不能由 4.44 环境替代。旧启动脚本只检查模块能否导入，会复用已安装的旧 Gradio。
+
+更新代码后，在 PowerShell 的项目目录中执行以下命令，启动脚本会修复项目虚拟环境的依赖：
+
+```powershell
+.\start.bat restart
+```
+
+手动修复、检查及前台启动时，明确使用同一个虚拟环境解释器：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade -r requirements.txt
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m babeldoc_app.runtime
+.\.venv\Scripts\python.exe babeldoc_translator.py
+```
+
+如果安装失败，请先处理 pip 报告的 Python 版本、下载源或依赖冲突问题，再重试；保留项目固定的依赖版本。Docker 部署请按上文重新构建镜像。
+
+### 翻译任务无响应
 
 如果任务长时间停留在“段落翻译”：
 
