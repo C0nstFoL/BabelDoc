@@ -148,7 +148,7 @@
 - 修复：移除无效卸载绑定及其专用清理函数，保留后台任务与持久化输出，由历史记录显式删除流程清理任务目录。
 - 验证：进度清空后仍可恢复结果，历史删除仍需两次点击确认；界面构建不再出现卸载回调参数警告。
 
-## BUG-028 已修复
+## BUG-028 已修复（3670cdb）
 - 位置：[Windows 启动脚本](../start.bat)、[运行环境检查](../babeldoc_app/runtime.py)、[服务启动](../babeldoc_app/server.py)、[Dockerfile](../Dockerfile)
 - 描述：用户反馈 Windows 部署时 Gradio 4.44 与历史表格不兼容。原启动脚本只检查模块能否导入，已有旧版本也会跳过安装；未创建虚拟环境的 `start` 路径还可能使用全局 Python。历史表格依赖新版 `static_columns`、`show_search`、`pinned_columns` 等接口。
 - 修复：Windows 启动统一使用项目 `.venv`，逐项检查直接依赖的固定版本，缺失或版本不符时按 `requirements.txt` 自动修复；启动前执行 `pip check`、BitStream 操作、翻译/OCR API 与实际界面构建检查。手动及 ASGI 启动在导入界面前阻止不匹配的依赖，输出实际版本、要求版本和修复命令；Docker 构建同步执行运行环境及界面检查。补充 Windows 排错步骤，保留批处理 CRLF 换行。
