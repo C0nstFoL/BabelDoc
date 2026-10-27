@@ -6,7 +6,8 @@ BabelDOC 是一个面向论文、课程资料和技术文档的 PDF 翻译工具
 
 当前版本：**release1.0.1**
 
-![Uploading image.png…]()
+<img width="2940" height="1846" alt="2026-10-27_13-29-25" src="https://github.com/user-attachments/assets/89b2f84c-53bc-449e-bb74-bd397ee35c22" />
+
 
 
 ## 主要功能
