@@ -810,8 +810,30 @@ _TASK: dict = {
 _task_lock = threading.Lock()
 
 
+# Windows's signal module has no SIGKILL; SIGTERM (TerminateProcess) is the equivalent.
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+
+
 def _signal_translation_process(proc, sig):
     """所有翻译/OCR 子进程共享独立进程组，避免留下阻塞线程或 OCR 孤儿。"""
+    if os.name == "nt":
+        # Windows has neither os.killpg nor SIGKILL; TerminateProcess is the
+        # practical equivalent. psutil (a BabelDOC dependency) walks and kills
+        # the whole tree (worker + OCR and other descendants) without spawning
+        # another process.
+        import psutil
+
+        try:
+            tree = [psutil.Process(proc.pid)]
+            tree.extend(tree[0].children(recursive=True))
+        except psutil.NoSuchProcess:
+            return
+        for p in tree:
+            try:
+                p.kill()
+            except psutil.NoSuchProcess:
+                pass
+        return
     try:
         os.killpg(proc.pid, sig)
     except ProcessLookupError:
@@ -992,7 +1014,7 @@ def _run_isolated_translation(options):
                     stop_started = time.monotonic()
                     _signal_translation_process(proc, signal.SIGTERM)
                 if proc.poll() is not None or time.monotonic() - stop_started >= _STOP_GRACE_SECONDS:
-                    _signal_translation_process(proc, signal.SIGKILL)
+                    _signal_translation_process(proc, _SIGKILL)
                     proc.wait()
                     raise asyncio.CancelledError()
             try:
@@ -1021,7 +1043,7 @@ def _run_isolated_translation(options):
         return result
     finally:
         # 同时回收 OCR、BabelDOC 派生的子进程；确认退出后才允许启动新任务。
-        _signal_translation_process(proc, signal.SIGKILL)
+        _signal_translation_process(proc, _SIGKILL)
         proc.wait()
         if not proc.stdin.closed:
             proc.stdin.close()
